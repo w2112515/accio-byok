@@ -1,5 +1,15 @@
 # Accio BYOK：实施结果与验收
 
+## 1.3.0: English-first bilingual app / 英文优先双语版
+
+2026-10-01. The app defaults to English and offers Simplified Chinese in the top bar and Settings. The same saved preference controls navigation, forms, preset descriptions, date formatting, tray menus, native dialogs, and new app errors. Existing provider names, notes, session content, historical logs, and upstream text keep their original language. No localization dependency was added. The installer offers English and Simplified Chinese independently of the app preference.
+
+软件默认英文，可在顶部或设置中切换简体中文并记住选择。界面、预设说明、日期、托盘、系统对话框与新产生的应用错误使用相同语言设置；不改写供应商名称、备注、会话内容、历史日志或上游原文。没有新增本地化依赖；安装器语言与软件语言独立。
+
+The existing 38 checks, type checking, and builds passed. All 767 English entries had matching interpolation placeholders; representative outbound conversation bodies stayed identical across languages for all four protocols. Isolated Electron runs confirmed the English default and translated validation errors. The final portable package confirmed both language controls, Chinese persistence after process restart, unchanged custom provider names, and readable controls/summary wrapping at 980×660. The installer's app.asar matched win-unpacked, and all six packaged build files matched the final source build. Packages and checksums are in release/1.3.0. No paid models, real Accio restart, or real account writes were used. Actual upgrade installation and login startup remain untested. Historical records below remain in their original Chinese; they are not claims of new verification.
+
+现有 38 项检查、类型检查和构建通过。767 条英文文案占位参数一致，四种协议的代表性出站会话内容在语言切换前后相同。隔离 Electron 实测确认英文默认值和英文校验错误；最终便携包验证两处语言入口、重启后中文选择保留、用户名称不变，以及 980×660 下按钮可见、英文摘要完整换行。安装器 app.asar 与解包目录一致，包内 6 个构建文件与最终源码构建一致；产物及校验值在 release/1.3.0。本轮未调用付费模型、重启真实 Accio 或写入真实账号。覆盖安装与登录自启仍未实测。下方历史正文保留中文，不代表重新验收。
+
 ## 1.2.1：审计问题修复
 
 2026-10-01。根据综合审计及用户“同意，开始修复优化”的授权执行。本轮以已复现的五处问题和故障恢复为边界，保留原技术栈、依赖、压缩专项停止条件和第三方接入方式。

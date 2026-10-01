@@ -1,3 +1,4 @@
+import { tr } from '../../shared/i18n.ts'
 import { createHash } from 'node:crypto'
 import type { ConnectionProtection, Provider } from '../../shared/types.ts'
 import { UpstreamError } from './accio.ts'
@@ -5,7 +6,7 @@ import type { FetchLike } from './adapters/common.ts'
 
 export function redactProviderError(message: string, provider: Provider): string {
   const secrets = [provider.apiKey, ...Object.values(provider.extraHeaders ?? {}).flatMap((value) => [value, value.trim(), value.trim().match(/^(?:Bearer|Basic)\s+(.+)$/i)?.[1] ?? ''])].filter(Boolean).sort((a, b) => b.length - a.length)
-  for (const value of secrets) message = message.split(value).join('[已隐藏凭据]')
+  for (const value of secrets) message = message.split(value).join(tr("[已隐藏凭据]"))
   return message.slice(0, 2000)
 }
 
@@ -23,12 +24,12 @@ export function protectedFetch(fetch: FetchLike, now = Date.now, onChange = () =
     for (const [k, s] of states) if (!s.active && s.until <= now()) states.delete(k)
     let state = states.get(key)
     if (!state) {
-      if (states.size >= 256) throw block('连接保护记录已满，请稍后再试；本次未发送')
+      if (states.size >= 256) throw block(tr("连接保护记录已满，请稍后再试；本次未发送"))
       state = { active: 0, until: 0 }
       states.set(key, state)
     }
-    if (state.until > now()) throw block(`上游限流冷却中，请等待 ${Math.ceil((state.until - now()) / 1000)} 秒后手动重试；未向供应商发送本次请求`)
-    if (state.active >= 4) throw block('同一接入凭据已有 4 个请求进行中，请等待完成后再试；未发送本次请求')
+    if (state.until > now()) throw block(tr("上游限流冷却中，请等待 {0} 秒后手动重试；未向供应商发送本次请求", Math.ceil((state.until - now()) / 1000)))
+    if (state.active >= 4) throw block(tr("同一接入凭据已有 4 个请求进行中，请等待完成后再试；未发送本次请求"))
     state.active++
     onChange()
     let released = false
@@ -39,7 +40,7 @@ export function protectedFetch(fetch: FetchLike, now = Date.now, onChange = () =
       const res = await fetch(url, { ...init, redirect: 'manual', credentials: 'omit', referrerPolicy: 'no-referrer' })
       if (res.status >= 300 && res.status < 400) {
         await res.body?.cancel().catch(() => {})
-        throw new UpstreamError('接口返回重定向，已阻止转发 Key 和会话；请核对并直接填写可信的最终 API 地址', res.status)
+        throw new UpstreamError(tr("接口返回重定向，已阻止转发 Key 和会话；请核对并直接填写可信的最终 API 地址"), res.status)
       }
       if (res.status === 429) {
         const retry = res.headers.get('retry-after')?.trim()

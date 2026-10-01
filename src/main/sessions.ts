@@ -1,3 +1,4 @@
+import { tr } from '../shared/i18n.ts'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
@@ -55,7 +56,7 @@ async function walk(dir: string, visit: (file: string, stat: fs.Stats) => void |
     const full = path.join(dir, e.name)
     if (e.isSymbolicLink()) {
       if (skipLinks) continue
-      throw new Error(`备份目录不支持符号链接：${full}`)
+      throw new Error(tr("备份目录不支持符号链接：{0}", full))
     }
     if (e.isDirectory()) await walk(full, visit, skipLinks)
     else if (e.isFile()) await visit(full, await fsp.stat(full))
@@ -138,7 +139,7 @@ export class SessionManager {
   }
 
   private accountDir(id: string): string {
-    if (!/^[A-Za-z0-9_-]+$/.test(id) || id.includes('__')) throw new Error('无效的账号 ID')
+    if (!/^[A-Za-z0-9_-]+$/.test(id) || id.includes('__')) throw new Error(tr("无效的账号 ID"))
     return path.join(this.accountsDir(), id)
   }
 
@@ -198,10 +199,10 @@ export class SessionManager {
 
   private backupDir(id: string): string {
     const [acc, stamp, extra] = id.split('__')
-    if (!acc || !stamp || extra !== undefined || !/^[A-Za-z0-9_-]+$/.test(acc) || !/^[A-Za-z0-9_-]+$/.test(stamp)) throw new Error('无效的备份 ID')
+    if (!acc || !stamp || extra !== undefined || !/^[A-Za-z0-9_-]+$/.test(acc) || !/^[A-Za-z0-9_-]+$/.test(stamp)) throw new Error(tr("无效的备份 ID"))
     const dir = path.join(this.paths.backupDir, acc, stamp)
     for (const candidate of [path.dirname(dir), dir]) {
-      if (fs.existsSync(candidate) && fs.lstatSync(candidate).isSymbolicLink()) throw new Error('备份路径不能包含符号链接')
+      if (fs.existsSync(candidate) && fs.lstatSync(candidate).isSymbolicLink()) throw new Error(tr("备份路径不能包含符号链接"))
     }
     return dir
   }
@@ -210,20 +211,20 @@ export class SessionManager {
     const dir = this.backupDir(id)
     const manifest = JSON.parse(await fsp.readFile(path.join(dir, 'manifest.json'), 'utf8')) as Manifest
     this.accountDir(manifest.accountId)
-    if (manifest.accountId !== id.split('__')[0] || !Number.isSafeInteger(manifest.fileCount) || manifest.fileCount < 0) throw new Error('备份清单无效')
+    if (manifest.accountId !== id.split('__')[0] || !Number.isSafeInteger(manifest.fileCount) || manifest.fileCount < 0) throw new Error(tr("备份清单无效"))
     const data = path.join(dir, 'data')
     const stat = await fsp.lstat(data)
-    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('备份数据目录无效')
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(tr("备份数据目录无效"))
     const actual = await dirStats(data)
-    if (actual.files !== manifest.fileCount) throw new Error('备份文件缺失或数量不符，已停止操作，当前会话未改动')
+    if (actual.files !== manifest.fileCount) throw new Error(tr("备份文件缺失或数量不符，已停止操作，当前会话未改动"))
     return { dir, manifest }
   }
 
   async backup(accountId: string, reason: BackupInfo['reason'] = 'manual', note?: string): Promise<BackupInfo> {
     const src = this.accountDir(accountId)
-    if (!(await exists(src))) throw new Error(`账号目录不存在：${accountId}`)
+    if (!(await exists(src))) throw new Error(tr("账号目录不存在：{0}", accountId))
     const sourceStat = await fsp.lstat(src)
-    if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) throw new Error('账号目录无效或为符号链接')
+    if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) throw new Error(tr("账号目录无效或为符号链接"))
     const createdAt = Date.now()
     const stamp = `${new Date(createdAt).toISOString().replace(/[:.]/g, '-')}-${crypto.randomUUID().slice(0, 8)}`
     const dir = path.join(this.paths.backupDir, accountId, stamp)
@@ -258,10 +259,10 @@ export class SessionManager {
     let moved = false
     try {
       const copied = await copyTree(path.join(dir, 'data'), stage)
-      if (copied.files !== manifest.fileCount) throw new Error('备份未完整复制，已停止恢复')
+      if (copied.files !== manifest.fileCount) throw new Error(tr("备份未完整复制，已停止恢复"))
       await this.paths.beforeWrite?.()
       if (await exists(target)) {
-        safetyBackupId = (await this.backup(manifest.accountId, 'before-restore', `恢复 ${id} 之前自动创建`)).id
+        safetyBackupId = (await this.backup(manifest.accountId, 'before-restore', tr("恢复 {0} 之前自动创建", id))).id
         await this.paths.beforeWrite?.()
         await fsp.rename(target, rollback)
         moved = true
@@ -289,14 +290,14 @@ export class SessionManager {
     const src = path.join(dir, 'data')
     const oldId = manifest.accountId
     const newId = targetAccountId
-    if (oldId === newId) throw new Error('源账号与目标账号相同，请使用「恢复」')
+    if (oldId === newId) throw new Error(tr("源账号与目标账号相同，请使用「恢复」"))
     const target = this.accountDir(newId)
-    if (!(await exists(target))) throw new Error('目标账号目录不存在，请先在 Accio 中登录该账号')
+    if (!(await exists(target))) throw new Error(tr("目标账号目录不存在，请先在 Accio 中登录该账号"))
 
     const report: MigrationReport = {
       sourceAccountId: oldId,
       targetAccountId: newId,
-      safetyBackupId: (await this.backup(newId, 'before-migrate', `迁移 ${oldId} 的会话之前自动创建`)).id,
+      safetyBackupId: (await this.backup(newId, 'before-migrate', tr("迁移 {0} 的会话之前自动创建", oldId))).id,
       filesCopied: 0,
       filesSkipped: 0,
       filesRewritten: 0,
@@ -312,10 +313,10 @@ export class SessionManager {
       await rewriteTree(staging, rewrite, report)
       await this.paths.beforeWrite?.()
       try { await mergeTree(staging, target, rewrite, report) } catch (e) {
-        report.warnings.push(`迁移已中断，目标可能已部分写入：${e instanceof Error ? e.message : String(e)}。可恢复保护备份 ${report.safetyBackupId}。`)
+        report.warnings.push(tr("迁移已中断，目标可能已部分写入：{0}。可恢复保护备份 {1}。", e instanceof Error ? e.message : String(e), report.safetyBackupId))
       }
     } catch (e) {
-      throw new Error(`迁移准备失败，尚未写入目标账号：${e instanceof Error ? e.message : String(e)}。保护备份：${report.safetyBackupId}`)
+      throw new Error(tr("迁移准备失败，尚未写入目标账号：{0}。保护备份：{1}", e instanceof Error ? e.message : String(e), report.safetyBackupId))
     } finally {
       await fsp.rm(staging, { recursive: true, force: true }).catch(() => {})
     }
@@ -347,7 +348,7 @@ function rewriteRecord(value: unknown, rewrite: (s: string) => string, field = '
   if (CONTENT_FIELD.test(key)) return value
   if (typeof value === 'string') {
     if (OWNER_FIELD.test(key) || REFERENCE_FIELD.test(key)) return rewrite(value)
-    if (IDENTIFIER.test(value) && rewrite(value) !== value) throw new Error(`未识别的引用字段 ${field || '(root)'}，已停止迁移，避免遗漏归属引用`)
+    if (IDENTIFIER.test(value) && rewrite(value) !== value) throw new Error(tr("未识别的引用字段 {0}，已停止迁移，避免遗漏归属引用", field || '(root)'))
     return value
   }
   if (Array.isArray(value)) return value.map((v) => rewriteRecord(v, rewrite, field))
@@ -383,13 +384,13 @@ async function rewriteTree(dir: string, rewrite: (s: string) => string, report: 
         }
         report.filesRewritten++
       } catch (e) {
-        throw new Error(`数据库 ${path.basename(file)} 重写失败：${String(e)}`)
+        throw new Error(tr("数据库 {0} 重写失败：{1}", path.basename(file), String(e)))
       } finally {
         db.close()
       }
     } else if (STRUCTURED_EXT.has(ext)) {
       const st = await fsp.stat(file)
-      if (st.size > 64 * 1024 * 1024) throw new Error(`文件 ${path.basename(file)} 超过 64 MiB，无法安全检查归属，已停止迁移`)
+      if (st.size > 64 * 1024 * 1024) throw new Error(tr("文件 {0} 超过 64 MiB，无法安全检查归属，已停止迁移", path.basename(file)))
       const text = await fsp.readFile(file, 'utf8')
       let next: string
       const rewriteJson = (line: string) => {
@@ -399,16 +400,16 @@ async function rewriteTree(dir: string, rewrite: (s: string) => string, report: 
         return JSON.stringify(parsed) === JSON.stringify(result) ? line : JSON.stringify(result)
       }
       try { next = ext === '.jsonl' ? text.split(/(\r?\n)/).map((line) => rewriteJson(line)).join('') : rewriteJson(text) }
-      catch (e) { throw new Error(`文件 ${path.basename(file)} 的结构无法安全迁移：${e instanceof Error ? e.message : String(e)}`) }
+      catch (e) { throw new Error(tr("文件 {0} 的结构无法安全迁移：{1}", path.basename(file), e instanceof Error ? e.message : String(e))) }
       if (next !== text) {
         await fsp.writeFile(file, next)
         report.filesRewritten++
       }
     } else if (['.jsonc', '.leaf', '.recovery', '.sink-migrated', ''].includes(ext)) {
       const st = await fsp.stat(file)
-      if (st.size > 64 * 1024 * 1024) throw new Error(`文件 ${path.basename(file)} 过大，无法安全检查归属`)
+      if (st.size > 64 * 1024 * 1024) throw new Error(tr("文件 {0} 过大，无法安全检查归属", path.basename(file)))
       const text = await fsp.readFile(file, 'utf8')
-      if (rewrite(text) !== text) throw new Error(`文件 ${path.basename(file)} 含归属引用但格式尚未支持，请保留备份；本次未写入目标账号`)
+      if (rewrite(text) !== text) throw new Error(tr("文件 {0} 含归属引用但格式尚未支持，请保留备份；本次未写入目标账号", path.basename(file)))
     }
   }
   // Rename deepest paths first so parents stay valid.
@@ -472,7 +473,7 @@ async function mergeTree(staging: string, target: string, _rewrite: (s: string) 
       } catch {
         /* not in a transaction */
       }
-      throw new Error(`合并数据库 ${rel} 失败：${String(e)}`)
+      throw new Error(tr("合并数据库 {0} 失败：{1}", rel, String(e)))
     } finally {
       try {
         db.exec('DETACH DATABASE src')

@@ -1,3 +1,4 @@
+import { tr } from '../../shared/i18n.ts'
 import { Activity, Boxes, Check, ChevronDown, DatabaseBackup, LayoutDashboard, Settings as SettingsIcon } from 'lucide-react'
 import { useCallback, useState } from 'react'
 import { toast } from 'sonner'
@@ -5,7 +6,7 @@ import type { AppState } from '../../shared/api.ts'
 import { OFFICIAL_PROVIDER_ID } from '../../shared/types.ts'
 import { usableModelInfo } from '../../shared/model-info.ts'
 import { AppLogo, OfficialAvatar, ProviderAvatar } from './components/brand.tsx'
-import { Button, Confirm, PopoverBox, PopoverClose, Skeleton, StatusDot } from './components/ui.tsx'
+import { Button, Confirm, PopoverBox, PopoverClose, SelectBox, Skeleton, StatusDot } from './components/ui.tsx'
 import { api } from './lib/api.ts'
 import { cn } from './lib/format.ts'
 import { useStore, type Page } from './lib/store.tsx'
@@ -16,43 +17,43 @@ import { SettingsPage } from './pages/Settings.tsx'
 import { UsagePage } from './pages/Usage.tsx'
 
 const NAV: { id: Page; label: string; icon: typeof Activity }[] = [
-  { id: 'home', label: '总览', icon: LayoutDashboard },
-  { id: 'providers', label: '模型接入', icon: Boxes },
-  { id: 'usage', label: '用量与诊断', icon: Activity },
-  { id: 'sessions', label: '会话备份', icon: DatabaseBackup },
-  { id: 'settings', label: '设置', icon: SettingsIcon },
+  { id: 'home', get label() { return tr("总览") }, icon: LayoutDashboard },
+  { id: 'providers', get label() { return tr("模型接入") }, icon: Boxes },
+  { id: 'usage', get label() { return tr("用量与诊断") }, icon: Activity },
+  { id: 'sessions', get label() { return tr("会话备份") }, icon: DatabaseBackup },
+  { id: 'settings', get label() { return tr("设置") }, icon: SettingsIcon },
 ]
 
 export async function takeoverWithToast(): Promise<void> {
-  const id = toast.loading('正在通过 Accio BYOK 启动 Accio…')
+  const id = toast.loading(tr("正在通过 Accio BYOK 启动 Accio…"))
   try {
     await api.accioTakeover()
-    toast.success('Accio 已启动', { id, description: '在 Accio 中发送消息后，可在这里核对实际模型和结果' })
+    toast.success(tr("Accio 已启动"), { id, description: tr("在 Accio 中发送消息后，可在这里核对实际模型和结果") })
   } catch (e) {
-    toast.error('启动失败', { id, description: (e as Error).message })
+    toast.error(tr("启动失败"), { id, description: (e as Error).message })
   }
 }
 
 /** Whether the selected source actually reaches Accio right now. */
 export function effectState(state: AppState): { tone: 'success' | 'warning' | 'neutral'; label: string } {
-  if (state.configError || !state.proxy.running) return { tone: 'warning', label: '本地接入不可用，请查看总览中的原因' }
-  if (state.busyOperation) return { tone: 'neutral', label: `正在${state.busyOperation}…` }
-  if (state.accio.takenOver) return { tone: 'success', label: '代理已收到请求；最近模型结果见用量与诊断' }
-  if (state.accio.launchedByUs) return { tone: 'neutral', label: 'Accio 已启动，等待首条请求' }
+  if (state.configError || !state.proxy.running) return { tone: 'warning', label: tr("本地接入不可用，请查看总览中的原因") }
+  if (state.busyOperation) return { tone: 'neutral', label: tr("正在{0}…", state.busyOperation) }
+  if (state.accio.takenOver) return { tone: 'success', label: tr("代理已收到请求；最近模型结果见用量与诊断") }
+  if (state.accio.launchedByUs) return { tone: 'neutral', label: tr("Accio 已启动，等待首条请求") }
   return state.accio.running
-    ? { tone: 'warning', label: '尚未确认接入，可重启 Accio 后验证' }
-    : { tone: 'neutral', label: '已选择来源，启动 Accio 后使用' }
+    ? { tone: 'warning', label: tr("尚未确认接入，可重启 Accio 后验证") }
+    : { tone: 'neutral', label: tr("已选择来源，启动 Accio 后使用") }
 }
 
 export function StartAccioButton() {
   const { state, go } = useStore()
   const [confirm, setConfirm] = useState(false)
   if (!state) return null
-  if (!state.accio.installed) return <Button variant="primary" onClick={() => go('settings')}>指定 Accio 位置</Button>
-  if (state.accio.takenOver || state.accio.launchedByUs) return <Button onClick={() => go('home')}>查看接入状态</Button>
+  if (!state.accio.installed) return <Button variant="primary" onClick={() => go('settings')}>{tr("指定 Accio 位置")}</Button>
+  if (state.accio.takenOver || state.accio.launchedByUs) return <Button onClick={() => go('home')}>{tr("查看接入状态")}</Button>
   return <>
-    <Button variant="primary" disabled={!!state.configError || !!state.busyOperation} onClick={() => state.accio.running ? setConfirm(true) : void takeoverWithToast()}>{state.accio.running ? '接管并重启 Accio' : '启动 Accio'}</Button>
-    <Confirm open={confirm} onOpenChange={setConfirm} title="接管并重启 Accio？" description="正在生成的回复和运行中的任务会中断。请先保存工作，再通过本地代理重新启动。" confirmText="接管并重启" onConfirm={takeoverWithToast} />
+    <Button variant="primary" disabled={!!state.configError || !!state.busyOperation} onClick={() => state.accio.running ? setConfirm(true) : void takeoverWithToast()}>{state.accio.running ? tr("接管并重启 Accio") : tr("启动 Accio")}</Button>
+    <Confirm open={confirm} onOpenChange={setConfirm} title={tr("接管并重启 Accio？")} description={tr("正在生成的回复和运行中的任务会中断。请先保存工作，再通过本地代理重新启动。")} confirmText={tr("接管并重启")} onConfirm={takeoverWithToast} />
   </>
 }
 
@@ -67,7 +68,7 @@ export function useSwitchProvider(): (id: string, name: string) => Promise<void>
       try {
         await api.activateProvider(id)
       } catch (e) {
-        toast.error('切换失败', { description: (e as Error).message })
+        toast.error(tr("切换失败"), { description: (e as Error).message })
         return
       }
       const accio = state?.accio
@@ -75,19 +76,19 @@ export function useSwitchProvider(): (id: string, name: string) => Promise<void>
       const prev = state?.providers.find((p) => p.id === state.activeProviderId)
       const nextWindow = next && usableModelInfo(next)?.contextWindow
       const prevWindow = prev && usableModelInfo(prev)?.contextWindow
-      const windowNote = next && !nextWindow ? '该模型窗口未知，长会话请核对供应商限制。' : nextWindow && prevWindow && nextWindow < prevWindow ? '目标模型窗口更小，建议先在 Accio 中整理或新建会话。' : ''
+      const windowNote = next && !nextWindow ? tr("该模型窗口未知，长会话请核对供应商限制。") : nextWindow && prevWindow && nextWindow < prevWindow ? tr("目标模型窗口更小，建议先在 Accio 中整理或新建会话。") : ''
       if (accio?.takenOver || accio?.launchedByUs) {
-        toast.success(`已选择 ${name}`, { description: `下一条请求生效，正在生成的回复不受影响。${windowNote}`, duration: windowNote ? 10_000 : 5000 })
+        toast.success(tr("已选择 {0}", name), { description: tr("下一条请求生效，正在生成的回复不受影响。{0}", windowNote), duration: windowNote ? 10_000 : 5000 })
       } else if (accio?.running) {
-        toast.warning(`已选择 ${name}，但还没有生效`, {
-          description: `当前尚未确认接入。请在总览中接管 Accio，操作会重启它。${windowNote}`,
-          action: { label: '查看接入', onClick: () => go('home') },
+        toast.warning(tr("已选择 {0}，但还没有生效", name), {
+          description: tr("当前尚未确认接入。请在总览中接管 Accio，操作会重启它。{0}", windowNote),
+          action: { label: tr("查看接入"), onClick: () => go('home') },
           duration: 10_000,
         })
       } else {
-        toast(`已选择 ${name}`, {
-          description: `${accio?.installed ? '通过 Accio BYOK 启动 Accio 后生效。' : '找到 Accio 并通过 Accio BYOK 启动后生效。'}${windowNote}`,
-          action: accio?.installed ? { label: '启动 Accio', onClick: () => void takeoverWithToast() } : undefined,
+        toast(tr("已选择 {0}", name), {
+          description: `${accio?.installed ? tr("通过 Accio BYOK 启动 Accio 后生效。") : tr("找到 Accio 并通过 Accio BYOK 启动后生效。")}${windowNote}`,
+          action: accio?.installed ? { label: tr("启动 Accio"), onClick: () => void takeoverWithToast() } : undefined,
           duration: 8000,
         })
       }
@@ -108,7 +109,7 @@ function QuickSwitch() {
       className="w-80"
       trigger={
         <button
-          aria-label={`当前模型来源：${activeName}。${effect.label}`}
+          aria-label={tr("当前模型来源：{0}。{1}", activeName, effect.label)}
           className="no-drag flex h-8 max-w-[360px] items-center gap-2 rounded-full border border-border bg-surface px-1.5 pr-3 text-[12.5px] shadow-sm transition hover:bg-surface-hover"
         >
           {isOfficial ? <OfficialAvatar size={22} /> : <ProviderAvatar presetId={activeProvider.presetId} name={activeProvider.name} size={22} />}
@@ -124,7 +125,7 @@ function QuickSwitch() {
         {effect.label}
       </div>
       <div className="max-h-80 overflow-y-auto">
-        {[{ id: OFFICIAL_PROVIDER_ID, name: 'Accio 官方', model: '使用 Accio 自带额度', presetId: undefined }, ...state.providers].map((p) => {
+        {[{ id: OFFICIAL_PROVIDER_ID, name: tr("Accio 官方"), model: tr("使用 Accio 自带额度"), presetId: undefined }, ...state.providers].map((p) => {
           const active = p.id === state.activeProviderId || (p.id === OFFICIAL_PROVIDER_ID && isOfficial)
           return (
             <PopoverClose asChild key={p.id}>
@@ -135,7 +136,7 @@ function QuickSwitch() {
                 {p.id === OFFICIAL_PROVIDER_ID ? <OfficialAvatar size={28} /> : <ProviderAvatar presetId={p.presetId} name={p.name} size={28} />}
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[13px] font-medium">{p.name}</div>
-                  <div className="truncate font-mono text-[11.5px] text-muted">{p.model || '未设置模型'}</div>
+                  <div className="truncate font-mono text-[11.5px] text-muted">{p.model || tr("未设置模型")}</div>
                 </div>
                 {active ? <Check className="size-4 text-accent" /> : null}
               </button>
@@ -152,13 +153,13 @@ function SidebarStatus() {
   if (!state) return <Skeleton className="h-20 w-full rounded-xl" />
   const { accio, proxy } = state
   const accioTone = !accio.installed ? 'danger' : accio.takenOver ? 'success' : accio.launchedByUs ? 'neutral' : accio.running ? 'warning' : 'neutral'
-  const accioText = !accio.installed ? '未找到 Accio' : accio.takenOver ? '代理已收到请求' : accio.launchedByUs ? 'Accio 已启动 · 待验证' : accio.running ? 'Accio 接入未确认' : 'Accio 未运行'
+  const accioText = !accio.installed ? tr("未找到 Accio") : accio.takenOver ? tr("代理已收到请求") : accio.launchedByUs ? tr("Accio 已启动 · 待验证") : accio.running ? tr("Accio 接入未确认") : tr("Accio 未运行")
   return (
     <button onClick={() => go('home')} className="no-drag w-full space-y-2 rounded-xl border border-border bg-surface/60 p-3 text-left text-[12px] transition hover:bg-surface">
       <div className="flex items-center gap-2">
         <StatusDot tone={proxy.running ? 'success' : 'danger'} />
-        <span className="text-muted">本地代理</span>
-        <span className="ml-auto font-mono text-[11.5px] text-fg tabular">{proxy.running ? `:${proxy.port}` : '已停止'}</span>
+        <span className="text-muted">{tr("本地代理")}</span>
+        <span className="ml-auto font-mono text-[11.5px] text-fg tabular">{proxy.running ? `:${proxy.port}` : tr("已停止")}</span>
       </div>
       <div className="flex items-center gap-2">
         <StatusDot tone={accioTone} pulse={accio.takenOver} />
@@ -172,26 +173,26 @@ function RecoveryNotice() {
   const { state, refresh, loadError } = useStore()
   const [confirm, setConfirm] = useState(false)
   const [busy, setBusy] = useState(false)
-  if (loadError) return <div role="alert" className="mb-5 rounded-xl bg-danger-soft p-4 text-[13px] text-danger"><p>读取应用状态失败：{loadError}</p><Button className="mt-3" onClick={() => void refresh().catch(() => {})}>重新读取状态</Button></div>
+  if (loadError) return <div role="alert" className="mb-5 rounded-xl bg-danger-soft p-4 text-[13px] text-danger"><p>{tr("读取应用状态失败：")}{loadError}</p><Button className="mt-3" onClick={() => void refresh().catch(() => {})}>{tr("重新读取状态")}</Button></div>
   if (!state) return null
   const recover = async (action: 'retry' | 'reset') => {
     setBusy(true)
-    try { await api.recoverConfig(action); await refresh(); toast.success(action === 'retry' ? '已重新读取配置' : '已保留原文件副本并创建新配置') }
-    catch (e) { toast.error('恢复未完成', { description: (e as Error).message }); await refresh() }
+    try { await api.recoverConfig(action); await refresh(); toast.success(action === 'retry' ? tr("已重新读取配置") : tr("已保留原文件副本并创建新配置")) }
+    catch (e) { toast.error(tr("恢复未完成"), { description: (e as Error).message }); await refresh() }
     finally { setBusy(false) }
   }
   if (state.configError) return <div role="alert" className="mb-5 rounded-xl border border-danger/30 bg-danger-soft p-4 text-[13px]">
-    <p className="font-medium text-danger">配置需要恢复</p><p className="mt-1 leading-relaxed text-muted">{state.configError}</p>
-    <div className="mt-3 flex flex-wrap gap-2"><Button size="sm" onClick={() => void api.openPath(state.dataDir)}>打开配置目录</Button><Button size="sm" loading={busy} onClick={() => void recover('retry')}>重新读取</Button><Button size="sm" disabled={busy} onClick={() => setConfirm(true)}>保留副本后重建</Button></div>
-    <Confirm open={confirm} onOpenChange={setConfirm} title="保留原文件后重建配置？" description="原 config.json 会先保存为 recovery 副本。新的供应商列表为空，需要重新添加 Key；日志和会话备份保留。无法保存副本时不会重建。" confirmText="保留副本并重建" onConfirm={() => recover('reset')} />
+    <p className="font-medium text-danger">{tr("配置需要恢复")}</p><p className="mt-1 leading-relaxed text-muted">{state.configError}</p>
+    <div className="mt-3 flex flex-wrap gap-2"><Button size="sm" onClick={() => void api.openPath(state.dataDir)}>{tr("打开配置目录")}</Button><Button size="sm" loading={busy} onClick={() => void recover('retry')}>{tr("重新读取")}</Button><Button size="sm" disabled={busy} onClick={() => setConfirm(true)}>{tr("保留副本后重建")}</Button></div>
+    <Confirm open={confirm} onOpenChange={setConfirm} title={tr("保留原文件后重建配置？")} description={tr("原 config.json 会先保存为 recovery 副本。新的供应商列表为空，需要重新添加 Key；日志和会话备份保留。无法保存副本时不会重建。")} confirmText={tr("保留副本并重建")} onConfirm={() => recover('reset')} />
   </div>
-  if (state.busyOperation) return <div role="status" className="mb-4 rounded-lg bg-accent-soft px-4 py-3 text-[13px] text-accent">正在{state.busyOperation}…</div>
-  if (state.operationError) return <div role="alert" className="mb-4 rounded-lg border border-warning/30 bg-warning-soft px-4 py-3 text-[13px] text-warning">上次操作未完成：{state.operationError}</div>
+  if (state.busyOperation) return <div role="status" className="mb-4 rounded-lg bg-accent-soft px-4 py-3 text-[13px] text-accent">{tr("正在")}{state.busyOperation}…</div>
+  if (state.operationError) return <div role="alert" className="mb-4 rounded-lg border border-warning/30 bg-warning-soft px-4 py-3 text-[13px] text-warning">{tr("上次操作未完成：")}{state.operationError}</div>
   return null
 }
 
 export function App() {
-  const { page, go } = useStore()
+  const { page, go, state, refresh } = useStore()
   return (
     <div className="flex h-full">
       <aside className="flex w-[228px] shrink-0 flex-col border-r border-border bg-sidebar">
@@ -199,7 +200,7 @@ export function App() {
           <AppLogo className="size-6" />
           <span className="font-display text-[14.5px] font-semibold tracking-tight">Accio BYOK</span>
         </div>
-        <nav className="mt-2 space-y-0.5 px-2.5" aria-label="主导航">
+        <nav className="mt-2 space-y-0.5 px-2.5" aria-label={tr("主导航")}>
           {NAV.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
@@ -222,6 +223,16 @@ export function App() {
       </aside>
       <main className="flex min-w-0 flex-1 flex-col">
         <div className="drag flex h-12 shrink-0 items-center justify-end gap-3 pr-[150px] pl-8">
+          <SelectBox
+            label="Language / 语言"
+            value={state?.settings.language ?? 'en'}
+            options={[{ value: 'en', label: 'English' }, { value: 'zh-CN', label: '简体中文' }]}
+            disabled={!state || !!state.busyOperation || !!state.configError}
+            className="h-8 w-[120px] shrink-0"
+            onChange={(language: 'en' | 'zh-CN') => {
+              void api.updateSettings({ language }).then(refresh).catch((e) => toast.error(tr('保存失败'), { description: e.message }))
+            }}
+          />
           <QuickSwitch />
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto">

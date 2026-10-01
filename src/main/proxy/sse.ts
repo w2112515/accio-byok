@@ -1,3 +1,4 @@
+import { tr } from '../../shared/i18n.ts'
 export interface SseEvent {
   event: string
   data: string
@@ -21,7 +22,7 @@ export async function* readSse(body: ReadableStream<Uint8Array>, signal?: AbortS
       signal?.throwIfAborted()
       if (done) break
       buffer += decoder.decode(value, { stream: true })
-      if (buffer.length + dataSize > limit) throw new Error('上游单个流式事件过大，已停止本轮请求')
+      if (buffer.length + dataSize > limit) throw new Error(tr("上游单个流式事件过大，已停止本轮请求"))
       let nl: number
       while ((nl = buffer.indexOf('\n')) >= 0) {
         let line = buffer.slice(0, nl)

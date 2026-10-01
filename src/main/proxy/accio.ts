@@ -1,3 +1,4 @@
+import { tr } from '../../shared/i18n.ts'
 // Accio ADK gateway protocol, reverse-engineered from Accio 0.33 (gateway-worker.js).
 //
 // Request:  POST {gateway}/api/adk/llm/generateContent  (JSON, keys snake_cased from a
@@ -118,7 +119,7 @@ function parseJsonObject(text: string | undefined): Record<string, unknown> {
 
 export function parseAccioRequest(body: unknown): AccioRequest {
   const raw = obj(body)
-  if (!raw) throw new Error('请求体不是 JSON 对象')
+  if (!raw) throw new Error(tr("请求体不是 JSON 对象"))
   const props = obj(pick(raw, 'properties')) ?? {}
   const contents = (Array.isArray(raw.contents) ? raw.contents : []).map((c): AccioContent => {
     const co = obj(c) ?? {}

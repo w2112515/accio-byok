@@ -1,10 +1,13 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Toaster } from 'sonner'
+import { setLanguage } from '../../shared/i18n.ts'
 import { App } from './App.tsx'
 import { TooltipProvider } from './components/ui.tsx'
 import { StoreProvider } from './lib/store.tsx'
 import './styles.css'
+
+setLanguage('en')
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

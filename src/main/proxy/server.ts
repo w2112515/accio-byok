@@ -1,3 +1,4 @@
+import { tr } from '../../shared/i18n.ts'
 import http from 'node:http'
 import { validateUpstreamGateway } from '../../shared/provider-input.ts'
 import https from 'node:https'
@@ -63,7 +64,7 @@ async function decodeBody(buf: Buffer, encoding: string | undefined): Promise<Bu
     case 'identity':
       return buf
     default:
-      throw new Error('不支持的请求压缩编码')
+      throw new Error(tr("不支持的请求压缩编码"))
   }
 }
 
@@ -245,13 +246,13 @@ export class ProxyServer {
   private handle(req: http.IncomingMessage, res: http.ServerResponse): void {
     if (!this.trustedLocalRequest(req)) {
       res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8', connection: 'close' })
-      res.end('此本地代理不接受网页跨域请求或非本机 Host')
+      res.end(tr("此本地代理不接受网页跨域请求或非本机 Host"))
       return
     }
     const path = (req.url ?? '/').split('?')[0]
     if (path === GENERATE_PATH && req.method === 'POST' && !/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] ?? '')) {
       res.writeHead(415, { connection: 'close' })
-      res.end('模型请求必须使用 application/json')
+      res.end(tr("模型请求必须使用 application/json"))
       return
     }
     if (path === HEALTH_PATH) {
@@ -293,7 +294,7 @@ export class ProxyServer {
     } catch {
       // Unknown encoding/shape: let the official gateway deal with it untouched.
       if (target.mode === 'official') return this.passthrough(req, res, raw)
-      throw new Error('无法解析 Accio 请求体')
+      throw new Error(tr("无法解析 Accio 请求体"))
     }
 
     if (target.mode === 'official') return this.officialGenerate(req, res, json, started)
@@ -303,6 +304,7 @@ export class ProxyServer {
     const model = resolveTargetModel(provider, accioReq.model)
     const capture = this.deps.debugCapture() ? { request: json, upstreamRequest: undefined as unknown, events: [] as string[] } : undefined
     let captureBytes = 0
+    let captureTruncated = false
 
     res.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8',
@@ -332,7 +334,10 @@ export class ProxyServer {
       onFrame: capture ? (f) => {
         captureBytes += Buffer.byteLength(f)
         if (captureBytes <= 1024 * 1024 && capture.events.length < 2000) capture.events.push(f)
-        else if (!capture.events.at(-1)?.startsWith('[采集已截断')) capture.events.push('[采集已截断：达到 1 MiB 或 2000 帧限制]')
+        else if (!captureTruncated) {
+          captureTruncated = true
+          capture.events.push(tr("[采集已截断：达到 1 MiB 或 2000 帧限制]"))
+        }
       } : undefined,
     })
     clearInterval(heartbeat)
@@ -384,7 +389,7 @@ export class ProxyServer {
         ts: started,
         mode: 'official',
         providerId: 'official',
-        providerName: 'Accio 官方',
+        providerName: tr("Accio 官方"),
         accioModel: model,
         targetModel: model,
         status: tap.error ? 'error' : status,

@@ -1,3 +1,4 @@
+import { tr } from '../../../shared/i18n.ts'
 import type { ModelInfo, Provider } from '../../../shared/types.ts'
 import { createHash } from 'node:crypto'
 import { normalizeBaseUrl } from '../../../shared/provider-input.ts'
@@ -94,17 +95,17 @@ export async function ensureOk(res: Response, label: string): Promise<Response> 
   const msg = (extractErrorMessage(text) || res.statusText).slice(0, 1500)
   const hint =
     res.status === 401 || res.status === 403
-      ? '（API Key 无效或无权限）'
+      ? tr("（API Key 无效或无权限）")
       : res.status === 404
-        ? '（接口地址或模型名可能不正确）'
+        ? tr("（接口地址或模型名可能不正确）")
         : res.status === 429
-          ? '（触发限流或余额不足）'
+          ? tr("（触发限流或余额不足）")
           : ''
-  throw new UpstreamError(`${label} 返回 ${res.status}${hint}：${msg}`, res.status)
+  throw new UpstreamError(tr("{0} 返回 {1}{2}：{3}", label, res.status, hint, msg), res.status)
 }
 
 export function requireBody(res: Response): ReadableStream<Uint8Array> {
-  if (!res.body) throw new UpstreamError('上游响应没有内容')
+  if (!res.body) throw new UpstreamError(tr("上游响应没有内容"))
   return res.body
 }
 

@@ -1,113 +1,137 @@
 # Accio BYOK
 
-为 [Accio](https://www.accio.com) 桌面端带来 **自带模型 Key（BYOK）**、**热切换**、**用量统计** 和 **会话备份**。设计上参考了 [cc-switch](https://github.com/farion1231/cc-switch)，会话迁移的思路来自 accio switch 脚本（已重写，并补上了 SQLite 和嵌入式 ID 的处理）。
+**Bring your own model keys to [Accio](https://www.accio.com).** Switch providers without restarting, track usage, and back up or migrate sessions.
 
-> 社区工具，与阿里巴巴或 Accio 官方无关。不包含任何账号注册、换号或绕过额度的功能。
+**English** · [简体中文](README.zh-CN.md)
 
-当前为 **1.2.1 公开测试版（Windows x64）**。[下载与更新记录](https://github.com/w2112515/accio-byok/releases/tag/v1.2.1)。真实供应商长会话和覆盖安装尚未完整实测；使用会话迁移前请阅读下方限制。
+> An independent community tool. Not affiliated with Alibaba or Accio. It does not register accounts, rotate accounts, or bypass quotas.
 
-## 工作原理
+**1.3.0 public preview · Windows x64** — [Downloads and release notes](https://github.com/w2112515/accio-byok/releases/tag/v1.3.0). The app defaults to English and also supports Simplified Chinese. Change **Language / 语言** in the top bar or Settings; your choice is saved for the next launch.
 
+## Download and get started
+
+1. Download the [Windows installer](https://github.com/w2112515/accio-byok/releases/download/v1.3.0/Accio-BYOK-Setup-1.3.0.exe) or [portable app](https://github.com/w2112515/accio-byok/releases/download/v1.3.0/Accio-BYOK-1.3.0-portable.exe). [SHA-256 checksums](https://github.com/w2112515/accio-byok/releases/download/v1.3.0/SHA256SUMS.txt) are provided. If an older version is running, quit it from the system tray first.
+2. Open **Providers → Add provider**, choose a connection type, and enter your API key. You can paste a base URL or a full Chat Completions, Responses, Anthropic Messages, or Gemini endpoint. The app normalizes the URL when you leave the field, preserving deployment subpaths.
+3. Select a model and choose **Test & enable**. The connection is saved and selected only after the test succeeds. **Save only** does not switch providers. Tests request up to 1,024 output tokens and may incur charges; their costs are excluded from Accio usage statistics.
+4. Choose **Start Accio**. If Accio is already running, connecting requires a confirmed restart and interrupts active tasks. A successful launch only confirms that the process started.
+5. Send a message in Accio, then check **Overview** or **Usage & diagnostics** for the actual model and result. Switch providers from the top bar or tray; the next request uses your selection.
+
+Closing the window normally leaves the proxy running in the tray. When quitting while Accio uses the proxy, the app offers to restart Accio with a direct connection to its official gateway.
+
+The installer offers English and Simplified Chinese. The app's language setting is independent of the installer language. Provider names, notes, conversation content, historical logs, and upstream responses retain their original text.
+
+## How it works
+
+```text
+Accio ── GATEWAY_BASE_URL ──▶ Accio BYOK (127.0.0.1:18920)
+                              ├─ /api/adk/llm/generateContent → selected model provider
+                              └─ sign-in, plugins, sync, etc. → phoenix-gw.alibaba.com
 ```
-Accio ──GATEWAY_BASE_URL──▶ Accio BYOK (127.0.0.1:18920)
-                               ├─ POST /api/adk/llm/generateContent ─▶ 当前供应商（OpenAI / Anthropic / Gemini 兼容）
-                               └─ 其余所有请求（登录、插件、同步…） ──▶ phoenix-gw.alibaba.com 原样透传
-```
 
-- Accio 会读取环境变量 `GATEWAY_BASE_URL`。Accio BYOK 用它启动 Accio，**不修改 Accio 安装文件**。
-- 模型请求被翻译成供应商的协议，流式结果再翻译回 Accio 的帧格式，包括文本、思考、工具调用、用量和错误。
-- 由代理按请求决定去向，所以切换供应商 **不需要重启 Accio**，下一条消息就生效。
-- 思考签名绑定接入记录、协议、地址、Key、请求头和模型；修改连接后不再回传旧签名。
+Accio reads `GATEWAY_BASE_URL`. Accio BYOK launches it with this variable and **does not modify Accio's installation files**. Model requests are translated to the selected provider's API; streamed text, reasoning, tool calls, usage, and errors are translated back into Accio frames. Other gateway traffic passes through.
 
-## 功能
+Routing is selected per request, so switching providers does not restart Accio or affect responses already in progress. Thought signatures are bound to the provider record, protocol, URL, key, headers, and model; changing the connection prevents reuse of its old signatures.
 
-| | |
+The interface was inspired by [cc-switch](https://github.com/farion1231/cc-switch). Session migration was inspired by the accio switch script and rewritten to handle SQLite and embedded identifiers.
+
+## Features
+
+| Area | Support |
 |---|---|
-| 供应商 | 18 个接入入口，新增 CPA / CLIProxyAPI、Sub2API、Grok2API、New API 和通用中转站；官方、国内厂商、聚合与本地模型入口保留 |
-| 协议 | OpenAI Chat Completions / Responses、Anthropic Messages、Gemini 原生接口；协议由实际网关配置决定 |
-| 模型 | 拉取模型列表，按地址、Key 和协议缓存 5 分钟、合并重复请求；支持强制刷新及逐个模型映射 |
-| Claude | 自适应思考（签名可多轮往返）、提示缓存、推理强度；历史改写时丢弃无法匹配的思考块 |
-| 网络 | 出站走 Chromium 网络栈：跟随系统代理、直连，或自定义 http/socks5 |
-| 用量 | 首字延迟、耗时、Token、缓存读写、已估算费用和完整计价覆盖率；缺少用量或单价明确显示未知，零价与未知分开 |
-| 会话 | 备份、恢复、迁移到另一个账号；写入前要求关闭 Accio，自动保留保护备份，部分迁移明确报告 |
-| 体验 | Windows 11 Mica 材质、深浅色主题、托盘热切换、桌面快捷方式「Accio (BYOK)」 |
-| 安全 | API Key 与自定义请求头加密保存；拦截跨域网页访问本地代理、上游重定向和危险请求头；限流冷却、并发保护与错误凭据脱敏 |
-| 恢复 | 配置损坏时阻止覆盖写入；显式重建前保留副本；无进展请求有等待期限和可执行错误提示 |
-| 模型信息 | 窗口和能力注明来源与时间；可单独检测工具调用、图片识别；未知保持未知 |
+| Providers | 18 visible presets: official APIs, Chinese providers, aggregators, local models, CPA / CLIProxyAPI, Sub2API, Grok2API, New API, and generic gateways |
+| Protocols | OpenAI Chat Completions and Responses, Anthropic Messages, and native Gemini; use the protocol supported by your gateway |
+| Models | Fetch model lists, force refresh, and map individual Accio models; lists are cached by connection for 5 minutes and duplicate requests are merged |
+| Claude | Adaptive reasoning, multi-turn thought signatures, prompt caching, and reasoning effort; unmatched reasoning blocks are dropped when history changes |
+| Network | Chromium networking with the system proxy, direct access, or a custom HTTP/SOCKS5 proxy |
+| Usage | Time to first token, duration, tokens, cache reads/writes, estimated cost, and pricing coverage; unknown values are distinct from zero |
+| Sessions | Back up, restore, and migrate to another account; writes require Accio to be closed, with safety backups and explicit partial-migration reporting |
+| Desktop | English / Simplified Chinese, light/dark themes, Windows 11 Mica, tray switching, and an “Accio (BYOK)” shortcut |
+| Protection | Encrypted keys and custom headers, browser-origin checks, redirect blocking, unsafe-header rejection, cooldowns, concurrency limits, and credential redaction |
+| Recovery | Corrupt configuration is preserved and cannot be overwritten until explicit recovery; stalled requests time out with actionable errors |
+| Model information | Source and timestamp for context limits and capabilities; optional tool and image tests; unknown information stays unknown |
 
-## 使用
+## Gateways and credentials
 
-1. 安装 [Accio-BYOK-Setup-1.2.1.exe](https://github.com/w2112515/accio-byok/releases/download/v1.2.1/Accio-BYOK-Setup-1.2.1.exe)，或运行 [便携版](https://github.com/w2112515/accio-byok/releases/download/v1.2.1/Accio-BYOK-1.2.1-portable.exe)。若旧版仍在运行，先从托盘退出，再打开新版。[SHA-256 校验文件](https://github.com/w2112515/accio-byok/releases/download/v1.2.1/SHA256SUMS.txt) 与安装产物同时提供。
-2. 在「模型接入」添加供应商，选择接入方式并填写 Key。可粘贴基础地址或完整的 Chat Completions / Responses / Anthropic Messages / Gemini 接口地址，离开输入框后自动识别并整理，保留部署子路径。选择模型后点「测试并启用」，成功才保存并选择；「仅保存」不切换。测试最多请求 1024 个输出 Token，可能收费，检测费用不计入 Accio 请求统计。
-3. 在成功页直接点「启动 Accio」。如果已经运行，确认后会重启一次并中断进行中的任务。启动完成只表示进程已运行。
-4. 在 Accio 发一条消息，从「总览」或「用量与诊断」核对实际模型与调用结果。以后通过托盘或右上角随时切换，下一条请求生效。
+Presets provide connection starting points. They do not deploy gateways, sign in to subscription accounts, or change gateway account pools. Enter a **client API key issued by the gateway**, not an admin key, OAuth login token, or website cookie. Fetch model IDs from the actual API or follow its documentation.
 
-改名保留原 `%APPDATA%/Accio Switch` 数据目录和安装身份；内部程序名仍为 `Accio Switch.exe`，用于兼容已有自启和快捷方式。旧安装包留作历史产物，不包含本轮改动。旧配置继续使用原协议；新建 OpenAI 官方连接默认使用 Responses。旧版明文自定义请求头会在下一次保存配置时加密；1.1 及更早版本不能读取新的加密请求头，降级需恢复升级前的完整应用数据副本或重新填写。
-
-1.2.1 加强 Anthropic/Gemini 思考签名隔离：旧版仅绑定供应商 ID 的签名不再回传，正文和工具历史保留；若供应商不接受旧会话续接，可新建会话。旧远程 HTTP 上游网关配置仍可读取和编辑，但已阻止转发，需在设置中改为可信的 HTTPS 地址；不会因此清空供应商配置。
-
-关闭窗口后程序会缩到托盘继续运行，因为代理需要一直开着。退出时如果 Accio 还在通过代理联网，会提示你让 Accio 以官方直连方式重启。
-
-## 中转接入与账号保护
-
-预设提供接入起点，不会部署网关、登录订阅账号或更改网关的账户池。填写网关签发的**客户端 API Key**；管理密钥、OAuth 登录令牌和网站 Cookie 不属于这里的接入凭据。模型名从实际接口读取或按站点说明填写，不按项目名称假定模型和额度。
-
-| 接入方式 | 地址与协议 |
+| Connection | URL and protocol |
 |---|---|
-| [CPA / CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) | 本机示例 `http://127.0.0.1:8317/v1`；Chat / Responses 或其他协议以部署配置为准。8317 来自项目配置模板 |
-| [Sub2API](https://github.com/Wei-Shaw/sub2api) | 按 Key 所属分组选择 Anthropic、OpenAI Responses 或其他兼容接口；如使用 `/antigravity` 专用路径，保留此前缀 |
-| [Grok2API](https://github.com/chenyme/grok2api) | 填实际部署地址，默认 Chat；不同版本、分支与账户来源支持的模型和接口可能不同 |
-| [New API](https://github.com/QuantumNous/new-api) / 通用中转站 | 按站点签发的令牌、渠道和接口说明设置；OpenAI 基础地址通常包含 `/v1`，不会盲目覆盖已有子路径 |
+| [CPA / CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) | Local example: `http://127.0.0.1:8317/v1`. Port 8317 comes from its configuration template. Chat, Responses, or other protocols depend on the deployment. |
+| [Sub2API](https://github.com/Wei-Shaw/sub2api) | Match Anthropic, OpenAI Responses, or another compatible API to the key's group. Preserve specialized prefixes such as `/antigravity`. |
+| [Grok2API](https://github.com/chenyme/grok2api) | Use the deployed URL; Chat is the preset default. Models and endpoints vary by version, fork, and account source. |
+| [New API](https://github.com/QuantumNous/new-api) / generic gateway | Follow the site's token, channel, and API instructions. OpenAI base URLs usually include `/v1`; existing subpaths are preserved. |
 
-- **请求保护**：同一目标站点及请求凭据最多 4 个并发请求，响应结束或取消后释放；超过上限直接说明原因，不积压队列。HTTP 429 按 `Retry-After` 秒数或日期等待，缺失时等待 60 秒。冷却仅在当前进程内保留，期间拦截相同连接的新请求；不自动重试或换号。网关自身的重试、换号与上游并发仍由网关管理，需要在网关端配置。
-- **保护状态**：首页、供应商卡片及检测结果显示当前并发和冷却倒计时。倒计时在本地计算，不轮询供应商；诊断详情将本地保护拦截标为“本次未发送”。成功率仍统计 Accio 发到本地代理的请求，包含本地拦截，不能直接当作上游可用率。
-- **凭据和地址**：不跟随上游 3xx 跳转、不附带浏览器 Cookie；自定义认证头按大小写无关方式合并。远程 HTTP 默认拒绝，明确允许后才能使用；本机 HTTP 保持可用。错误会遮蔽配置中的 Key 和请求头原值；自定义请求头在编辑区仍显示原值。
-- **登录与同步网关**：设置中的上游网关会接收 Accio 登录凭据及同步数据，远程地址必须使用 HTTPS，HTTP 仅允许本机；保存设置、HTTP 转发与 WebSocket 升级均检查。此处没有远程明文豁免开关。
-- **本地边界**：代理只监听 `127.0.0.1`，检查 Host、Origin 与跨站请求标记，模型调用要求 JSON；WebSocket 升级也检查来源。这是网页访问防护，不是对本机恶意程序的身份认证。上游单个 SSE 事件限制为 16 Mi 字符，错误体最多读取 64 Ki 字符。
-- **Responses**：支持文本、图片输入、函数工具调用及结果回传、用量和加密思考内容续接；加密思考绑定当前接入凭据、地址与模型。请求固定 `store: false`，不使用服务端 `previous_response_id`；流式响应未完整结束或工具参数不完整时不执行工具。自定义停止序列不受 Responses 支持，会明确报错。该存储参数不是对第三方中转隐私行为的保证。[官方协议说明](https://developers.openai.com/api/docs/guides/migrate-to-responses)
+- **Request protection:** up to 4 concurrent requests per target site and credentials. Slots release when the response finishes or is cancelled. Excess requests are rejected locally rather than queued. HTTP 429 follows `Retry-After` seconds or a date, defaulting to 60 seconds. Cooldowns last only within the current process. There is no automatic retry or account rotation. Gateway-side retries and account pools remain the gateway's responsibility.
+- **Visible status:** Overview, provider cards, and test results show concurrency and cooldowns. Countdown updates are local and do not poll providers. Diagnostics mark blocked requests as **Not sent**. Success rate includes local rejections and measures requests received by this proxy, not upstream availability alone.
+- **Credentials and URLs:** API redirects are not followed, browser cookies are not attached, and custom authentication headers are merged case-insensitively. Remote HTTP requires explicit consent; local HTTP is allowed. Errors redact configured key and header values. The custom-header editor still shows original values.
+- **Sign-in and sync gateway:** the upstream gateway in Settings receives Accio credentials and sync data. Remote URLs must use HTTPS; HTTP is allowed only locally. Settings, HTTP forwarding, and WebSocket upgrades enforce this boundary. There is no remote-HTTP exception for this gateway.
+- **Local boundary:** the proxy listens only on `127.0.0.1` and checks Host, Origin, and cross-site request markers. Model calls require JSON. WebSocket upgrades also check the origin. These checks protect against browser access; they do not authenticate local programs. Individual upstream SSE events are limited to 16 Mi characters; error bodies to 64 Ki characters.
+- **Responses:** supports text, image input, function calls/results, usage, and encrypted reasoning continuation bound to the current connection and model. Requests use `store: false` and do not use `previous_response_id`. Incomplete streams or tool arguments do not execute tools. Custom stop sequences are rejected explicitly. The storage parameter does not guarantee a third-party gateway's privacy practices. [Official protocol guide](https://developers.openai.com/api/docs/guides/migrate-to-responses)
 
-这些措施降低误发凭据、突发请求和重复调用风险，**不承诺防封号**。账号是否允许这种接入方式、配额与风控由各平台决定；中转方能接触请求内容，只接入你信任且有权使用的服务。没有伪装官方客户端、自动切换代理 IP 或规避账户限制的功能。
+These measures reduce accidental credential forwarding and request bursts. They **do not guarantee protection against account restrictions**. Each platform controls permitted access, quotas, and enforcement. Gateways can access request content; connect only to services you trust and are authorized to use. There is no official-client impersonation, automatic proxy-IP switching, or account-limit evasion.
 
-## 缓存与自动压缩
+## Caching, context limits, and completion
 
-- **提示缓存与上下文压缩是两回事。** 提示缓存减少重复输入的处理成本，不扩大模型上下文窗口。Claude 缓存的命中、写入和未缓存输入会分别统计；5 分钟缓存首次写入通常按输入价的 1.25 倍计费。Claude 官方留空写入价格时按该比例估算，自定义供应商可单独填写。价格和用量均为估算，实际账单以供应商为准。[官方缓存说明](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
-- **自动压缩由 Accio 管理。** 已核对本机 Accio 0.33：它从自身模型目录读取上下文窗口。BYOK 热切换仅替换出站模型，尚不修改该目录或压缩阈值。若目标模型窗口更小，可能在 Accio 自动压缩前超限；这时应压缩或新建会话，并检查最大输出 Token。代理会明确提示上下文不足，不会偷偷裁剪历史或自动发起额外摘要请求。
-- **压缩会改变缓存前缀。** 改写历史、工具定义或部分思考参数可能使已有提示缓存失效；需要在连续对话中观察命中量，不能把“启用缓存”当作必定命中。[官方失效条件](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#what-invalidates-the-cache)
-- 模型列表缓存只在内存保存，最多 20 组连接、5 分钟有效；切换出站网络配置时清除。日志统计缓存最多 31 天且按文件大小合计不超过 16 MiB，磁盘历史仍由「清空日志」主动删除。
-- 调试捕获仅在内存保留，最多 30 条、单条 2 MiB、合计 16 MiB；响应帧最多 2000 条或 1 MiB，超限注明截断。关闭捕获后立即清除，常见认证字段会隐藏；消息正文仍可能含敏感内容。
-- HTTP 请求体的 gzip / deflate / Brotli / Zstd 解压在后台执行，并限制解压后大小。它属于传输处理，不改变聊天内容或 Token 数量。
+**Prompt caching and context compaction are different.** Caching can lower repeated-input costs; it does not expand a context window. Claude cache reads, writes, and uncached input are tracked separately. Official Claude 5-minute cache writes are estimated at 1.25× input price when no write price is entered; custom providers can set their own. Prices and usage are estimates; the provider's bill is authoritative. [Official caching guide](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
 
-上游空响应、缺失结束标记、取消和不完整工具参数不会被当作成功回复。兼容供应商需要返回有效流式结束标记。响应头默认等待 60 秒，有效上游事件空闲默认等待 180 秒（设置中可调整）；本地下行心跳不延长等待。超时不会自动重放请求。
+**Accio manages automatic compaction.** Inspection of local Accio 0.33 showed that it reads context limits from its own model catalog. BYOK switching changes the outbound model but does not update that catalog or compaction threshold. A smaller target window can overflow before Accio compacts. Compact or start a new conversation and check the output token limit. The proxy reports context-limit errors; it does not silently trim history or send extra summarization requests.
 
-工具调用只在正常结束时整批交付；即使参数是合法 JSON，达到输出上限、拒绝或安全拦截等结束状态也不会交付工具。仅有思考、空白或无正文/工具的结果明确报错，供应商可能已计费；正常输出的部分正文仍可显示。
+**Compaction changes cache prefixes.** Rewriting history, tool definitions, or some reasoning settings can invalidate cached prefixes. Enabling caching does not guarantee a hit. [Official invalidation rules](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#what-invalidates-the-cache)
 
-连接测试只验证短文本；可选工具和图片检测各发一个合成请求，不执行工具、不读取用户文件。仍需在 Accio 验证真实工具多轮和长会话。窗口信息只用于提示，尚不修改原生压缩阈值；本轮专项已按停止条件收敛，细节见下方实施记录。
+Resource bounds:
 
-恢复会话前检查备份目录及文件数量，完整暂存后才替换当前账号，并保留保护备份。迁移准备失败会停止；提交中失败会报告部分完成及恢复入口。SQLite 支持在线备份，但跨文件一致的恢复点建议关闭 Accio 后创建。文件数校验不能检测所有内容损坏。
+- Model lists: memory only, up to 20 connections for 5 minutes; cleared when outbound network settings change.
+- Usage-statistics cache: up to 31 days and 16 MiB by file size. On-disk history remains until **Clear all logs** is used.
+- Debug captures: memory only, up to 30 entries, 2 MiB each and 16 MiB total. Response frames are capped at 2,000 or 1 MiB, with truncation marked. Disabling capture clears it immediately. Common authentication fields are hidden; message bodies may still contain sensitive content.
+- HTTP gzip, deflate, Brotli, and Zstd decompression runs asynchronously with a decoded-size limit. It does not change conversation content or token counts.
 
-迁移仅重写已知归属/引用字段及标识路径，不再替换正文、标题、工具参数和作品内容中的账号数字；artifacts/skills 文件内容保持原值，SQLite 采用一致性快照。检测到未知引用字段或不支持的引用格式时，在写入目标前停止，不能保证迁移任意 Accio 版本的所有结构。账号列表统计跳过符号链接目标；实际备份和恢复仍拒绝符号链接，避免意外复制或覆盖链接目标。列表读取失败保留原因和重试入口，旧列表在重新读取成功前不能操作。
+Empty responses, missing completion markers, cancellation, and incomplete tool arguments are not successful replies. Headers time out after 60 seconds; valid upstream events have a default 180-second idle limit, adjustable in Settings. Local heartbeat frames do not extend this deadline. Timeouts do not replay requests.
 
-## 开发
+Tool calls are delivered as a complete batch only after normal completion. Output limits, refusal, or safety stops prevent delivery even when arguments are valid JSON. Reasoning-only, blank, or empty results are reported as errors; providers may still charge. Partial visible text can remain visible.
 
-实施范围、压缩专项停止依据及验证记录见 [实施结果与验收](docs/next-stage.md)。本轮 38 项检查覆盖既有行为、工具终止、空结果、签名隔离、正文迁移保护、凭据与转发边界；类型检查和构建通过。界面与打包验收见实施记录。真实第三方网关、付费模型、原生长会话压缩、实际覆盖安装和登录自启尚未实测。
+Connection tests verify short text only. Optional tool and image tests each send one synthetic request, execute no tools, and read no user files. Real multi-turn tools and long conversations still need verification in Accio. Model information is advisory and does not change native compaction thresholds.
+
+## Backups and migration
+
+Restore checks backup directories and file counts, stages the complete data before replacement, and keeps a safety backup. Migration preparation failures stop before writing; failures during commit report partial completion and a recovery entry point. SQLite online backup is supported, but close Accio before creating an important cross-file restore point. File counts cannot detect every form of content corruption.
+
+Migration rewrites only known ownership/reference fields and identifier paths. Account numbers in message text, titles, tool arguments, and generated content are preserved. Artifact and skill file contents remain unchanged; SQLite uses consistent snapshots. Unknown reference fields or unsupported formats stop migration before target writes. Arbitrary Accio versions and structures are not guaranteed.
+
+Account-list statistics skip symbolic-link targets. **Actual backup and restore still reject symbolic links** to avoid copying or overwriting their targets. If list loading fails, the app keeps the reason and a retry action; stale lists remain disabled until a successful reload.
+
+## Upgrading and compatibility
+
+The app keeps `%APPDATA%/Accio Switch`, its installation identity, and the internal executable name `Accio Switch.exe` to preserve existing startup entries and shortcuts. Older release assets do not include later changes.
+
+Existing OpenAI connections keep their protocol; new official OpenAI connections default to Responses. Legacy plain-text custom headers are encrypted on the next configuration save. Version 1.1 and earlier cannot read the new encrypted headers: restore a complete pre-upgrade application-data copy or re-enter them when downgrading.
+
+Since 1.2.1, old Anthropic/Gemini signatures bound only to provider ID are no longer forwarded. Text and tool history remain; start a new conversation if a provider rejects continuation. Legacy remote-HTTP upstream gateway settings remain readable and editable, but forwarding is blocked until changed to a trusted HTTPS URL. Provider configuration is preserved.
+
+Version 1.3.0 adds a saved language preference. Configurations without it open in English. Switching language does not rename saved providers or rewrite notes, sessions, historical logs, or upstream content.
+
+## Development and verification
+
+See [Implementation and acceptance notes](docs/next-stage.md) for scope, evidence, and the compaction investigation's stop condition (the current release note is bilingual; historical records remain in Chinese). The existing 38 checks cover protocol completion, tool termination, empty results, signature isolation, migration content protection, credentials, and forwarding boundaries. Type checking and builds pass. UI and package evidence is recorded separately.
+
+Real paid providers, native long-conversation compaction, actual upgrade installation, and Windows login startup have not been fully tested.
 
 ```bash
-npm install                 # Electron 走 npmmirror：设置 ELECTRON_MIRROR
-npm run dev                 # 开发模式
-npm test                    # 协议、代理、会话迁移测试（node:test）
+npm install                 # Set ELECTRON_MIRROR if an Electron download mirror is needed
+npm run dev                 # Development mode
+npm test                    # Protocol, proxy, configuration, and session checks (node:test)
 npm run typecheck
-npm run build && npm start   # 运行当前源码构建；现成 release/ 安装包不会自动更新
-npm run dist                # 打包 NSIS 安装版 + 便携版到 release/
+npm run build && npm start   # Build and run current source; existing release assets do not update
+npm run dist                # Build Windows NSIS and portable packages in release/
 ```
 
-`scripts/seed-demo.mjs <new-directory>` 仅用于创建合成演示数据，目标必须不存在；脚本不会清空已有目录。示例 Key 均为无效占位值，不可用于真实供应商。
+`scripts/seed-demo.mjs <new-directory>` creates synthetic demo data only. The target directory must not exist; the script never clears an existing directory. Demo keys are invalid placeholders.
 
-目录结构：
-
-```
-src/main/proxy/     协议翻译与本地代理（accio.ts 为逆向得到的 ADK 帧协议）
-src/main/sessions.ts 备份 / 恢复 / 跨账号迁移
-src/main/index.ts   窗口、托盘、IPC、Accio 进程控制
-src/renderer/       React + Tailwind v4 + Radix 界面
-tests/              accio-client.ts 复刻了 Accio 客户端的帧解析逻辑，用来验证输出
+```text
+src/main/proxy/       API translation and local proxy; accio.ts describes the observed ADK frames
+src/main/sessions.ts  Backup, restore, and cross-account migration
+src/main/index.ts     Windows, tray, IPC, and Accio process control
+src/shared/i18n.ts    Shared language selection and message interpolation
+src/shared/translations.ts  English translations of app-owned copy
+src/renderer/        React, Tailwind v4, and Radix UI
+tests/               Includes an Accio frame parser replica for checking output
 ```

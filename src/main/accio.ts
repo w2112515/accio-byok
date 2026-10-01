@@ -1,3 +1,4 @@
+import { tr } from '../shared/i18n.ts'
 import { execFile, spawn } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -11,7 +12,7 @@ export const DEFAULT_GATEWAY = 'https://phoenix-gw.alibaba.com'
 function run(cmd: string, args: string[], strict = false): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(cmd, args, { windowsHide: true, timeout: 15_000 }, (err, stdout) => {
-      if (strict && err) reject(new Error(`无法检查 Accio 进程：${err.message}`))
+      if (strict && err) reject(new Error(tr("无法检查 Accio 进程：{0}", err.message)))
       else resolve(String(stdout ?? ''))
     })
   })
@@ -68,7 +69,7 @@ export async function stopAccio(): Promise<void> {
     await sleep(300)
     if (!(await listAccioPids()).length) return
   }
-  throw new Error('Accio 仍在运行，未能关闭。请保存任务并手动关闭后重试。')
+  throw new Error(tr("Accio 仍在运行，未能关闭。请保存任务并手动关闭后重试。"))
 }
 
 /** Launch Accio; with a gateway URL every gateway request goes through our proxy. */

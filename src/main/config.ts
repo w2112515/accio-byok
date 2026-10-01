@@ -1,3 +1,4 @@
+import { tr } from '../shared/i18n.ts'
 import { EventEmitter } from 'node:events'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -24,6 +25,7 @@ type StoredConfig = Omit<AppConfig, 'providers'> & { providers: StoredProvider[]
 
 export function defaultSettings(overrides: Partial<AppSettings> = {}): AppSettings {
   return {
+    language: 'en',
     proxyPort: 18920,
     upstreamGateway: 'https://phoenix-gw.alibaba.com',
     accioExePath: '',
@@ -40,22 +42,24 @@ export function defaultSettings(overrides: Partial<AppSettings> = {}): AppSettin
 }
 
 export function validateSettings(settings: AppSettings, loadingLegacy = false): AppSettings {
-  if (!Number.isInteger(settings.proxyPort) || settings.proxyPort < 1024 || settings.proxyPort > 65535) throw new Error('代理端口必须是 1024–65535 的整数')
-  if (!['system', 'direct', 'custom'].includes(settings.networkProxy)) throw new Error('出站代理模式无效')
-  if (!['system', 'light', 'dark'].includes(settings.theme)) throw new Error('主题设置无效')
+  const language = settings.language ?? 'en'
+  if (language !== 'en' && language !== 'zh-CN') throw new Error(tr('语言设置无效'))
+  if (!Number.isInteger(settings.proxyPort) || settings.proxyPort < 1024 || settings.proxyPort > 65535) throw new Error(tr("代理端口必须是 1024–65535 的整数"))
+  if (!['system', 'direct', 'custom'].includes(settings.networkProxy)) throw new Error(tr("出站代理模式无效"))
+  if (!['system', 'light', 'dark'].includes(settings.theme)) throw new Error(tr("主题设置无效"))
   for (const key of ['launchAccioOnStart', 'minimizeToTray', 'openAtLogin', 'debugCapture'] as const) {
-    if (typeof settings[key] !== 'boolean') throw new Error(`设置 ${key} 无效`)
+    if (typeof settings[key] !== 'boolean') throw new Error(tr("设置 {0} 无效", key))
   }
-  if (typeof settings.accioExePath !== 'string' || typeof settings.networkProxyUrl !== 'string') throw new Error('路径或代理地址格式无效')
+  if (typeof settings.accioExePath !== 'string' || typeof settings.networkProxyUrl !== 'string') throw new Error(tr("路径或代理地址格式无效"))
   validateUpstreamGateway(settings.upstreamGateway, loadingLegacy)
   if (settings.networkProxy === 'custom') {
     let proxy: URL
-    try { proxy = new URL(settings.networkProxyUrl.trim()) } catch { throw new Error('请填写自定义代理地址，例如 http://127.0.0.1:7890') }
-    if (!['http:', 'https:', 'socks4:', 'socks5:'].includes(proxy.protocol) || proxy.username || proxy.password || proxy.search || proxy.hash || (proxy.pathname && proxy.pathname !== '/')) throw new Error('代理地址仅支持不带账号密码和路径的 HTTP、HTTPS、SOCKS4 或 SOCKS5 地址')
+    try { proxy = new URL(settings.networkProxyUrl.trim()) } catch { throw new Error(tr("请填写自定义代理地址，例如 http://127.0.0.1:7890")) }
+    if (!['http:', 'https:', 'socks4:', 'socks5:'].includes(proxy.protocol) || proxy.username || proxy.password || proxy.search || proxy.hash || (proxy.pathname && proxy.pathname !== '/')) throw new Error(tr("代理地址仅支持不带账号密码和路径的 HTTP、HTTPS、SOCKS4 或 SOCKS5 地址"))
   }
   const idle = settings.upstreamIdleTimeoutSeconds ?? 180
-  if (!Number.isInteger(idle) || idle < 30 || idle > 3600) throw new Error('无进展等待时间必须是 30–3600 秒的整数')
-  return { ...settings, networkProxyUrl: settings.networkProxyUrl.trim(), upstreamIdleTimeoutSeconds: idle }
+  if (!Number.isInteger(idle) || idle < 30 || idle > 3600) throw new Error(tr("无进展等待时间必须是 30–3600 秒的整数"))
+  return { ...settings, language, networkProxyUrl: settings.networkProxyUrl.trim(), upstreamIdleTimeoutSeconds: idle }
 }
 
 export function maskKey(key: string): string {
@@ -89,17 +93,17 @@ export class ConfigStore extends EventEmitter {
     const fallback: AppConfig = { version: 1, activeProviderId: OFFICIAL_PROVIDER_ID, providers: [], settings: defaultSettings(settingsDefaults) }
     try {
       const raw = JSON.parse(fs.readFileSync(this.file, 'utf8')) as Partial<StoredConfig>
-      if (!raw || typeof raw !== 'object' || Array.isArray(raw) || (raw.version !== undefined && raw.version !== 1) || !Array.isArray(raw.providers)) throw new Error('配置格式或版本无效')
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw) || (raw.version !== undefined && raw.version !== 1) || !Array.isArray(raw.providers)) throw new Error(tr("配置格式或版本无效"))
       const ids = new Set<string>()
       for (const p of raw.providers) {
-        if (!p || typeof p.id !== 'string' || !p.id || p.id === OFFICIAL_PROVIDER_ID || ids.has(p.id) || !['openai', 'anthropic', 'gemini'].includes(p.kind) || ['name', 'baseUrl', 'model', 'apiKey'].some((k) => typeof p[k as keyof Provider] !== 'string')) throw new Error('供应商配置不完整或标识重复')
-        if (p.modelOverrides && (typeof p.modelOverrides !== 'object' || Array.isArray(p.modelOverrides) || Object.values(p.modelOverrides).some((v) => typeof v !== 'string'))) throw new Error('模型映射格式无效')
-        if (p.extraHeaders && (typeof p.extraHeaders !== 'object' || Array.isArray(p.extraHeaders) || Object.values(p.extraHeaders).some((v) => typeof v !== 'string'))) throw new Error('自定义请求头格式无效')
-        if (p.encryptedHeaders !== undefined && typeof p.encryptedHeaders !== 'string') throw new Error('加密请求头格式无效')
+        if (!p || typeof p.id !== 'string' || !p.id || p.id === OFFICIAL_PROVIDER_ID || ids.has(p.id) || !['openai', 'anthropic', 'gemini'].includes(p.kind) || ['name', 'baseUrl', 'model', 'apiKey'].some((k) => typeof p[k as keyof Provider] !== 'string')) throw new Error(tr("供应商配置不完整或标识重复"))
+        if (p.modelOverrides && (typeof p.modelOverrides !== 'object' || Array.isArray(p.modelOverrides) || Object.values(p.modelOverrides).some((v) => typeof v !== 'string'))) throw new Error(tr("模型映射格式无效"))
+        if (p.extraHeaders && (typeof p.extraHeaders !== 'object' || Array.isArray(p.extraHeaders) || Object.values(p.extraHeaders).some((v) => typeof v !== 'string'))) throw new Error(tr("自定义请求头格式无效"))
+        if (p.encryptedHeaders !== undefined && typeof p.encryptedHeaders !== 'string') throw new Error(tr("加密请求头格式无效"))
         ids.add(p.id)
       }
       const active = raw.activeProviderId ?? OFFICIAL_PROVIDER_ID
-      if (active !== OFFICIAL_PROVIDER_ID && !ids.has(active)) throw new Error('当前选中的供应商不存在')
+      if (active !== OFFICIAL_PROVIDER_ID && !ids.has(active)) throw new Error(tr("当前选中的供应商不存在"))
       const loaded: AppConfig = {
         version: 1,
         activeProviderId: active,
@@ -111,7 +115,7 @@ export class ConfigStore extends EventEmitter {
       return loaded
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === 'ENOENT') this.loadError = undefined
-      else this.loadError = `配置读取失败，原文件已保留，暂时禁止保存和接入。${e instanceof SyntaxError ? '文件内容不是有效的 JSON。' : e instanceof Error ? e.message : String(e)}`
+      else this.loadError = tr("配置读取失败，原文件已保留，暂时禁止保存和接入。{0}", e instanceof SyntaxError ? tr("文件内容不是有效的 JSON。") : e instanceof Error ? e.message : String(e))
       return fallback
     }
   }
@@ -172,7 +176,7 @@ export class ConfigStore extends EventEmitter {
         const plain = this.reveal(apiKey)
         return { ...rest, extraHeaders: this.revealHeaders({ encryptedHeaders, extraHeaders }), apiKeyMasked: maskKey(plain), hasApiKey: Boolean(plain) }
       } catch {
-        return { ...rest, apiKeyMasked: '', hasApiKey: Boolean(apiKey), keyError: '已保存的凭据无法解密，请在原 Windows 账户下打开，或重新填写 Key 和自定义请求头' }
+        return { ...rest, apiKeyMasked: '', hasApiKey: Boolean(apiKey), keyError: tr("已保存的凭据无法解密，请在原 Windows 账户下打开，或重新填写 Key 和自定义请求头") }
       }
     })
   }
@@ -183,7 +187,7 @@ export class ConfigStore extends EventEmitter {
       const headers = JSON.parse(this.box.decrypt(p.encryptedHeaders))
       if (!headers || typeof headers !== 'object' || Array.isArray(headers) || Object.values(headers).some((v) => typeof v !== 'string')) throw new Error('invalid headers')
       return headers
-    } catch { throw new Error('已保存的自定义请求头无法解密，请在原 Windows 账户下打开，或重新填写请求头') }
+    } catch { throw new Error(tr("已保存的自定义请求头无法解密，请在原 Windows 账户下打开，或重新填写请求头")) }
   }
 
   private reveal(stored: string): string {
@@ -191,7 +195,7 @@ export class ConfigStore extends EventEmitter {
     try {
       return this.box.decrypt(stored)
     } catch {
-      throw new Error('已保存的 API Key 无法解密，请在原 Windows 账户下打开，或重新填写 Key')
+      throw new Error(tr("已保存的 API Key 无法解密，请在原 Windows 账户下打开，或重新填写 Key"))
     }
   }
 
@@ -207,7 +211,7 @@ export class ConfigStore extends EventEmitter {
     this.assertWritable()
     if (this.config.activeProviderId === OFFICIAL_PROVIDER_ID) return { mode: 'official' }
     const p = this.provider(this.config.activeProviderId)
-    if (!p) throw new Error('当前供应商不存在，请重新选择模型来源')
+    if (!p) throw new Error(tr("当前供应商不存在，请重新选择模型来源"))
     return { mode: 'byok', provider: p }
   }
 
@@ -236,7 +240,7 @@ export class ConfigStore extends EventEmitter {
       ...input,
       id: prev?.id ?? newId(),
       createdAt: prev?.createdAt ?? Date.now(),
-      name: input.name.trim() || findPreset(input.presetId)?.name || '未命名供应商',
+      name: input.name.trim() || findPreset(input.presetId)?.name || tr("未命名供应商"),
       baseUrl: input.baseUrl.trim().replace(/\/+$/, ''),
       model: input.model.trim(),
       modelOverrides: Object.fromEntries(Object.entries(input.modelOverrides ?? {}).filter(([k, v]) => k.trim() && v.trim())),
@@ -259,7 +263,7 @@ export class ConfigStore extends EventEmitter {
   duplicateProvider(id: string): ProviderView | undefined {
     const p = this.config.providers.find((x) => x.id === id)
     if (!p) return undefined
-    const copy: Provider = { ...p, id: newId(), name: `${p.name} 副本`, createdAt: Date.now(), modelOverrides: { ...p.modelOverrides } }
+    const copy: Provider = { ...p, id: newId(), name: tr("{0} 副本", p.name), createdAt: Date.now(), modelOverrides: { ...p.modelOverrides } }
     this.config.providers.splice(this.config.providers.indexOf(p) + 1, 0, copy)
     this.save()
     return this.providerViews().find((v) => v.id === copy.id)
@@ -272,7 +276,7 @@ export class ConfigStore extends EventEmitter {
   }
 
   setActive(id: string): void {
-    if (id !== OFFICIAL_PROVIDER_ID && !this.config.providers.some((p) => p.id === id)) throw new Error('供应商不存在')
+    if (id !== OFFICIAL_PROVIDER_ID && !this.config.providers.some((p) => p.id === id)) throw new Error(tr("供应商不存在"))
     if (id !== OFFICIAL_PROVIDER_ID) normalizeProviderInput(this.provider(id)!, true)
     this.config.activeProviderId = id
     this.save()

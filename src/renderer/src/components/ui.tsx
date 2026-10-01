@@ -1,3 +1,4 @@
+import { tr } from '../../../shared/i18n.ts'
 import { cva, type VariantProps } from 'class-variance-authority'
 import { Check, ChevronDown, Eye, EyeOff, Loader2, X } from 'lucide-react'
 import { AlertDialog, Dialog, DropdownMenu, Popover, Select, Slot, Switch as RSwitch, Tabs, Tooltip } from 'radix-ui'
@@ -114,7 +115,7 @@ export function SecretInput({ className, ...props }: ComponentProps<'input'>) {
       <button
         type="button"
         onClick={() => setShow((s) => !s)}
-        aria-label={show ? '隐藏' : '显示'}
+        aria-label={show ? tr("隐藏") : tr("显示")}
         className="absolute inset-y-0 right-0 flex w-9 items-center justify-center text-subtle hover:text-fg no-drag"
       >
         {show ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
@@ -206,6 +207,7 @@ export function SelectBox<T extends string>({
   className,
   id,
   label,
+  disabled,
 }: {
   value: T | undefined
   onChange: (v: T) => void
@@ -214,9 +216,10 @@ export function SelectBox<T extends string>({
   className?: string
   id?: string
   label?: string
+  disabled?: boolean
 }) {
   return (
-    <Select.Root value={value} onValueChange={(v) => onChange(v as T)}>
+    <Select.Root value={value} onValueChange={(v) => onChange(v as T)} disabled={disabled}>
       <Select.Trigger
         id={id}
         aria-label={label}
@@ -314,7 +317,7 @@ export function Modal({
               {description ? <Dialog.Description className="mt-1 text-[13px] text-muted">{description}</Dialog.Description> : <Dialog.Description className="sr-only">{String(title)}</Dialog.Description>}
             </div>
             <Dialog.Close asChild>
-              <Button variant="ghost" size="icon-sm" aria-label="关闭">
+              <Button variant="ghost" size="icon-sm" aria-label={tr("关闭")}>
                 <X />
               </Button>
             </Dialog.Close>
@@ -335,9 +338,9 @@ export function Sheet({ open, onOpenChange, title, children }: { open: boolean; 
         <Dialog.Content className="fixed top-2 right-2 bottom-2 z-50 flex w-[min(620px,calc(100vw-80px))] flex-col rounded-2xl border border-border bg-surface-2 shadow-pop backdrop-blur-2xl animate-slide-in outline-none no-drag">
           <div className="flex items-center justify-between gap-4 border-b border-border px-5 py-3.5">
             <Dialog.Title className="truncate text-[15px] font-semibold">{title}</Dialog.Title>
-            <Dialog.Description className="sr-only">详情</Dialog.Description>
+            <Dialog.Description className="sr-only">{tr("详情")}</Dialog.Description>
             <Dialog.Close asChild>
-              <Button variant="ghost" size="icon-sm" aria-label="关闭">
+              <Button variant="ghost" size="icon-sm" aria-label={tr("关闭")}>
                 <X />
               </Button>
             </Dialog.Close>
@@ -354,7 +357,7 @@ export function Confirm({
   onOpenChange,
   title,
   description,
-  confirmText = '确定',
+  confirmText = tr("确定"),
   danger,
   onConfirm,
 }: {
@@ -376,7 +379,7 @@ export function Confirm({
           <AlertDialog.Description className="mt-2 text-[13px] leading-relaxed text-muted">{description}</AlertDialog.Description>
           <div className="mt-5 flex justify-end gap-2">
             <AlertDialog.Cancel asChild>
-              <Button>取消</Button>
+              <Button>{tr("取消")}</Button>
             </AlertDialog.Cancel>
             <Button
               variant={danger ? 'danger' : 'primary'}

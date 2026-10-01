@@ -1,3 +1,4 @@
+import { setLanguage, tr } from '../../../shared/i18n.ts'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import type { AppState } from '../../../shared/api.ts'
@@ -43,7 +44,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const run = async () => {
       do {
         dirty.current = false
-        setState(await api.getState())
+        const next = await api.getState()
+        setLanguage(next.settings.language ?? 'en')
+        document.documentElement.lang = next.settings.language ?? 'en'
+        setState(next)
         setLoadError(undefined)
       } while (dirty.current)
     }
@@ -55,12 +59,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const refreshSafely = () => void refresh().catch(() => {})
-    const readLogs = () => void api.recentLogs(300).then(setLogs).catch((e) => toast.error('读取请求记录失败', { description: e.message }))
+    const readLogs = () => void api.recentLogs(300).then(setLogs).catch((e) => toast.error(tr("读取请求记录失败"), { description: e.message }))
     refreshSafely()
     readLogs()
-    void api.accioModels().then((list) => setNames(Object.fromEntries(list.map((m) => [m.code, m.name])))).catch((e) => toast.error('读取 Accio 模型目录失败', { description: e.message }))
+    void api.accioModels().then((list) => setNames(Object.fromEntries(list.map((m) => [m.code, m.name])))).catch((e) => toast.error(tr("读取 Accio 模型目录失败"), { description: e.message }))
     return onAppEvent((e) => {
-      if (e.type === 'storage-error') toast.error('用量日志写入失败', { description: e.message })
+      if (e.type === 'storage-error') toast.error(tr("用量日志写入失败"), { description: e.message })
       else if (e.type === 'log') setLogs((prev) => [e.entry, ...prev].slice(0, 300))
       else if (e.type === 'navigate') {
         setPage(e.page)
@@ -87,7 +91,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       clearIntent: () => setIntent(undefined),
       logs,
       activeProvider,
-      activeName: state?.activeProviderId === OFFICIAL_PROVIDER_ID || !activeProvider ? 'Accio 官方' : activeProvider.name,
+      activeName: state?.activeProviderId === OFFICIAL_PROVIDER_ID || !activeProvider ? tr("Accio 官方") : activeProvider.name,
       modelName: (code) => names[code] ?? code,
     }),
     [state, loadError, refresh, page, intent, logs, activeProvider, names],

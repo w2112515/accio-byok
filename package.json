@@ -1,7 +1,7 @@
 {
   "name": "accio-switch",
   "productName": "Accio BYOK",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "description": "Bring your own model keys to Accio — hot-switch providers, back up sessions, track usage.",
   "author": "Accio BYOK",
   "license": "MIT",
@@ -68,6 +68,8 @@
       "requestedExecutionLevel": "asInvoker"
     },
     "nsis": {
+      "installerLanguages": ["en_US", "zh_CN"],
+      "displayLanguageSelector": true,
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,

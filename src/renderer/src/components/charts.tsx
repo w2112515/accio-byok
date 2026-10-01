@@ -1,3 +1,4 @@
+import { tr } from '../../../shared/i18n.ts'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { cn } from '../lib/format.ts'
 
@@ -76,7 +77,7 @@ export function StackedBars({
       </div>
       <div ref={ref} className="relative w-full" style={{ height }} onMouseLeave={() => setHover(null)}>
         {width > 0 ? (
-          <svg width={width} height={height} role="img" aria-label="每日用量柱状图" className="block overflow-visible">
+          <svg width={width} height={height} role="img" aria-label={tr("每日用量柱状图")} className="block overflow-visible">
             {ticks.map((t, i) => {
               const y = padT + innerH - (t / max) * innerH
               return (
@@ -158,7 +159,7 @@ export function MiniBars({ values, labels, format, height = 56, className }: { v
   return (
     <div ref={ref} className={cn('relative w-full', className)} style={{ height }} onMouseLeave={() => setHover(null)}>
       {width > 0 ? (
-        <svg width={width} height={height} role="img" aria-label="近 7 天请求数" className="block">
+        <svg width={width} height={height} role="img" aria-label={tr("近 7 天请求数")} className="block">
           {values.map((v, i) => {
             const h = Math.max(v > 0 ? 3 : 1.5, (v / max) * (height - 4))
             const x = i * (barW + gap)
@@ -187,7 +188,7 @@ export function MiniBars({ values, labels, format, height = 56, className }: { v
 export function ShareList({ items, format, empty }: { items: { key: string; label: ReactNode; value: number; sub?: ReactNode }[]; format: (n: number) => string; empty?: ReactNode }) {
   const total = items.reduce((s, i) => s + i.value, 0)
   const max = Math.max(...items.map((i) => i.value), 1)
-  if (!items.length) return <div className="py-6 text-center text-[13px] text-subtle">{empty ?? '暂无数据'}</div>
+  if (!items.length) return <div className="py-6 text-center text-[13px] text-subtle">{empty ?? tr("暂无数据")}</div>
   return (
     <ul className="space-y-3">
       {items.map((i) => (

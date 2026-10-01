@@ -1,3 +1,4 @@
+import { tr } from '../../../shared/i18n.ts'
 import { findPreset } from '../../../shared/presets.ts'
 import type { ProviderKind } from '../../../shared/types.ts'
 import { cn } from '../lib/format.ts'
@@ -55,7 +56,7 @@ export function ProviderAvatar({ presetId, name, size = 40 }: { presetId?: strin
 }
 
 export const KIND_LABEL: Record<ProviderKind, string> = {
-  openai: 'OpenAI 兼容',
+  get openai() { return tr("OpenAI 兼容") },
   anthropic: 'Anthropic',
   gemini: 'Gemini',
 }

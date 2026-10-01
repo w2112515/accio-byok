@@ -1,3 +1,4 @@
+import { tr } from '../../../shared/i18n.ts'
 import { createHash } from 'node:crypto'
 import { UpstreamError, clampEffort, safeToolId, unwrapSignature, wrapSignature, type AccioRequest, type AdapterEvent, type Usage } from '../accio.ts'
 import { readSse, tryJson } from '../sse.ts'
@@ -22,7 +23,7 @@ function reasoningItem(item: Item): Item | undefined {
 }
 
 export function buildResponsesBody(req: AccioRequest, ctx: Connection): Item {
-  if (req.stopSequences.length) throw new UpstreamError('Responses 接口不支持自定义停止序列，请取消该选项或使用 Chat Completions', 400)
+  if (req.stopSequences.length) throw new UpstreamError(tr("Responses 接口不支持自定义停止序列，请取消该选项或使用 Chat Completions"), 400)
   const messages = toOpenAIMessages(req, ctx.provider)
   const modelTurns = req.contents.filter((c) => ['model', 'assistant'].includes(c.role) && c.parts.some((p) => p.functionCall || p.text))
   const input: Item[] = []
@@ -87,7 +88,7 @@ async function* stream(req: AccioRequest, ctx: AdapterContext): AsyncGenerator<A
     const j = tryJson(ev.data) as Item | undefined
     if (!j) continue
     const type = j.type ?? ev.event
-    if (type === 'error' || type === 'response.failed') throw new UpstreamError(`${ctx.provider.name}：${j.response?.error?.message ?? j.error?.message ?? j.message ?? 'Responses 请求失败'}`, Number(j.status_code ?? j.response?.error?.status_code) || 502)
+    if (type === 'error' || type === 'response.failed') throw new UpstreamError(`${ctx.provider.name}：${j.response?.error?.message ?? j.error?.message ?? j.message ?? tr("Responses 请求失败")}`, Number(j.status_code ?? j.response?.error?.status_code) || 502)
     if (/^response\.(output_text|refusal|reasoning_summary_text)\.delta$/.test(type) && typeof j.delta === 'string') {
       ctx.onProgress?.()
       const key = `${j.item_id ?? j.output_index}:${j.content_index ?? j.summary_index ?? 0}:${type.split('.')[1]}`
@@ -103,13 +104,13 @@ async function* stream(req: AccioRequest, ctx: AdapterContext): AsyncGenerator<A
       }
     } else if (type === 'response.completed' || type === 'response.incomplete') {
       terminal = j.response
-      if (!terminal) throw new UpstreamError('Responses 结束事件缺少 response')
+      if (!terminal) throw new UpstreamError(tr("Responses 结束事件缺少 response"))
       if (Array.isArray(terminal.output) && terminal.output.length) terminal.output.forEach((item: Item, i: number) => items.set(i, item))
       terminal.status ??= type === 'response.completed' ? 'completed' : 'incomplete'
       break
     }
   }
-  if (!terminal) throw new UpstreamError('Responses 响应未完整结束；已停止本轮，未执行工具调用')
+  if (!terminal) throw new UpstreamError(tr("Responses 响应未完整结束；已停止本轮，未执行工具调用"))
   const output = [...items.entries()].sort(([a], [b]) => a - b)
   const u = terminal.usage ?? {}
   const usage: Partial<Usage> = {
@@ -121,7 +122,7 @@ async function* stream(req: AccioRequest, ctx: AdapterContext): AsyncGenerator<A
   const calls = output.map(([, item]) => item).filter((item) => item.type === 'function_call')
   if (terminal.status !== 'completed') {
     yield { type: 'finish', reason: 'length', usage }
-    if (calls.length || terminal.incomplete_details?.reason !== 'max_output_tokens') throw new UpstreamError(`Responses 未完成（${terminal.incomplete_details?.reason ?? terminal.status}）；未执行工具调用`)
+    if (calls.length || terminal.incomplete_details?.reason !== 'max_output_tokens') throw new UpstreamError(tr("Responses 未完成（{0}）；未执行工具调用", terminal.incomplete_details?.reason ?? terminal.status))
   }
   const reasoning = output.map(([, item]) => reasoningItem(item)).filter(Boolean)
   const signature = reasoning.length ? wrapSignature(signatureOwner(ctx), JSON.stringify(reasoning)) : undefined
@@ -139,7 +140,7 @@ async function* stream(req: AccioRequest, ctx: AdapterContext): AsyncGenerator<A
   // Accio preserves signatures only on non-empty parts; reuse the existing invisible placeholder.
   if (signature) yield { type: 'thought', text: '\u200b', signature }
   for (const call of calls) {
-    if (!call.call_id || !call.name || typeof call.arguments !== 'string' || (call.status && call.status !== 'completed')) throw new UpstreamError('Responses 工具调用不完整，已停止本轮')
+    if (!call.call_id || !call.name || typeof call.arguments !== 'string' || (call.status && call.status !== 'completed')) throw new UpstreamError(tr("Responses 工具调用不完整，已停止本轮"))
     yield { type: 'tool_call', id: safeToolId(call.call_id), name: call.name, argsJson: call.arguments, signature }
   }
   yield { type: 'finish', reason: terminal.status === 'completed' ? (calls.length ? 'tool_calls' : 'stop') : 'length', usage }

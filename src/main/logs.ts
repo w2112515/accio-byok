@@ -1,3 +1,4 @@
+import { tr } from '../shared/i18n.ts'
 import { EventEmitter } from 'node:events'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
@@ -109,10 +110,10 @@ export class LogStore extends EventEmitter {
     if (this.recentEntries.length > RECENT_LIMIT) this.recentEntries.shift()
     void this.enqueue(() => fsp.appendFile(this.file(dayKey(log.ts)), `${JSON.stringify(log)}\n`))
     if (capture) {
-      const serialized = JSON.stringify(capture, (key, value) => /^(token|access_?token|refresh_?token|authorization|api_?key|cookie|secret)$/i.test(key) ? '[已隐藏]' : value)
+      const serialized = JSON.stringify(capture, (key, value) => /^(token|access_?token|refresh_?token|authorization|api_?key|cookie|secret)$/i.test(key) ? tr("[已隐藏]") : value)
       const bounded = Buffer.byteLength(serialized) <= 2 * 1024 * 1024
         ? JSON.parse(serialized) as Omit<RequestCapture, 'id'>
-        : { request: '调试内容超过 2 MiB，未保留正文；用量日志不受影响。', events: [] }
+        : { request: tr("调试内容超过 2 MiB，未保留正文；用量日志不受影响。"), events: [] }
       this.captures.set(log.id, { id: log.id, ...bounded })
       this.captureSizes.set(log.id, Buffer.byteLength(JSON.stringify(bounded)))
       while (this.captures.size > CAPTURE_LIMIT || [...this.captureSizes.values()].reduce((a, b) => a + b, 0) > CAPTURE_BYTES) {

@@ -88,6 +88,8 @@ export interface ConnectionProtection {
 export type NetworkProxyMode = 'system' | 'direct' | 'custom'
 
 export interface AppSettings {
+  /** Display language; configurations without this setting default to English. */
+  language?: 'en' | 'zh-CN'
   proxyPort: number
   /** Upstream Accio gateway for pass-through traffic. */
   upstreamGateway: string

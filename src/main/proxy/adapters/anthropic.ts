@@ -1,3 +1,4 @@
+import { tr } from '../../../shared/i18n.ts'
 import type { ModelInfo, Provider } from '../../../shared/types.ts'
 import {
   UpstreamError,
@@ -127,6 +128,7 @@ export function toAnthropicMessages(req: AccioRequest, provider: Provider, model
         const mime = p.inlineData.mimeType.toLowerCase().replace('image/jpg', 'image/jpeg')
         if (IMAGE_MIME.has(mime)) blocks.push({ type: 'image', source: { type: 'base64', media_type: mime, data: p.inlineData.data } })
         else if (mime === 'application/pdf') blocks.push({ type: 'document', source: { type: 'base64', media_type: mime, data: p.inlineData.data } })
+        // Wire-format fallback text stays stable when the display language changes.
         else blocks.push({ type: 'text', text: `[附件 ${mime}，当前模型接口不支持该类型]` })
       } else if (p.fileData?.fileUri) {
         const { fileUri, mimeType } = p.fileData
@@ -299,12 +301,12 @@ async function* stream(req: AccioRequest, ctx: AdapterContext): AsyncGenerator<A
       case 'message_stop': completed = true; break
       case 'error': {
         const e = j.error ?? {}
-        throw new UpstreamError(`${ctx.provider.name}：${e.type ? `${e.type} · ` : ''}${e.message ?? '未知错误'}`)
+        throw new UpstreamError(`${ctx.provider.name}：${e.type ? `${e.type} · ` : ''}${e.message ?? tr("未知错误")}`)
       }
     }
   }
-  if (!completed || !stop || blocks.size) throw new UpstreamError(`${ctx.provider.name}：响应未完整结束，请重试`)
-  if (stop === 'refusal') yield { type: 'text', text: '\n\n[模型拒绝了本次请求]' }
+  if (!completed || !stop || blocks.size) throw new UpstreamError(tr("{0}：响应未完整结束，请重试", ctx.provider.name))
+  if (stop === 'refusal') yield { type: 'text', text: tr("\n\n[模型拒绝了本次请求]") }
   yield { type: 'finish', reason: stop, usage }
 }
 

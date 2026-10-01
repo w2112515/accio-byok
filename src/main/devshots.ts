@@ -10,6 +10,13 @@ export type Step = { js: string } | { wait: number } | { shot: string } | { view
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
+async function screenshot(win: BrowserWindow): Promise<Buffer> {
+  // Wake an occluded Windows surface before taking the frame used for review.
+  await win.webContents.capturePage()
+  await wait(150)
+  return (await win.webContents.capturePage()).toPNG()
+}
+
 /** Helpers injected into the renderer for scenario scripts. */
 const HELPERS = `
 window.__t = {
@@ -31,23 +38,25 @@ true;
 `
 
 export async function captureAll(win: BrowserWindow, dir: string, extra: { name: string; script: string }[] = []): Promise<void> {
+  win.webContents.setBackgroundThrottling(false)
   fs.mkdirSync(dir, { recursive: true })
   await wait(2500)
   const suffix = process.env.ASW_SHOT_SUFFIX ?? ''
   for (const [i, label] of PAGES.entries()) {
-    await win.webContents.executeJavaScript(`[...document.querySelectorAll('nav button')].find(b => b.textContent.includes(${JSON.stringify(label)}))?.click()`)
+    await win.webContents.executeJavaScript(`document.querySelectorAll('nav button')[${i}]?.click()`)
     await wait(1400)
-    fs.writeFileSync(path.join(dir, `${i + 1}-${label}${suffix}.png`), (await win.webContents.capturePage()).toPNG())
+    fs.writeFileSync(path.join(dir, `${i + 1}-${label}${suffix}.png`), await screenshot(win))
   }
   for (const { name, script } of extra) {
     await win.webContents.executeJavaScript(script)
     await wait(1200)
-    fs.writeFileSync(path.join(dir, `${name}${suffix}.png`), (await win.webContents.capturePage()).toPNG())
+    fs.writeFileSync(path.join(dir, `${name}${suffix}.png`), await screenshot(win))
   }
 }
 
 /** Run a scripted walkthrough; each step's outcome is appended to walk.log in `dir`. */
 export async function runScenario(win: BrowserWindow, dir: string, steps: Step[]): Promise<void> {
+  win.webContents.setBackgroundThrottling(false)
   fs.mkdirSync(dir, { recursive: true })
   const log = (line: string) => fs.appendFileSync(path.join(dir, 'walk.log'), `${line}\n`)
   await wait(2500)
@@ -61,7 +70,7 @@ export async function runScenario(win: BrowserWindow, dir: string, steps: Step[]
         await wait(300)
       }
       else if ('shot' in step) {
-        fs.writeFileSync(path.join(dir, `${step.shot}.png`), (await win.webContents.capturePage()).toPNG())
+        fs.writeFileSync(path.join(dir, `${step.shot}.png`), await screenshot(win))
         log(`shot ${step.shot}`)
       } else if ('js' in step) {
         const r = await win.webContents.executeJavaScript(`(async () => { ${step.js} })()`)

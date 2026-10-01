@@ -1,3 +1,4 @@
+import { getLanguage, tr } from '../../../shared/i18n.ts'
 import {
   ArrowLeft,
   Check,
@@ -98,7 +99,7 @@ interface Draft {
 const num = (s: string) => {
   if (!s.trim()) return undefined
   const n = Number(s)
-  if (!Number.isFinite(n) || n < 0) throw new Error('Token 与价格必须填写有效的非负数字')
+  if (!Number.isFinite(n) || n < 0) throw new Error(tr("Token 与价格必须填写有效的非负数字"))
   return n
 }
 
@@ -175,7 +176,7 @@ function toInput(d: Draft): ProviderInput {
   for (const line of d.headersText.split('\n')) {
     if (!line.trim()) continue
     const i = line.indexOf(':')
-    if (i <= 0) throw new Error('自定义请求头应为「名称: 值」，每行一个')
+    if (i <= 0) throw new Error(tr("自定义请求头应为「名称: 值」，每行一个"))
     headers[line.slice(0, i).trim()] = line.slice(i + 1).trim()
   }
   const pricing = { input: num(d.priceIn), output: num(d.priceOut), cachedInput: num(d.priceCached), cacheWriteInput: num(d.priceWrite) }
@@ -210,16 +211,17 @@ function toInput(d: Draft): ProviderInput {
 
 function PresetGallery({ onPick }: { onPick: (p: ProviderPreset) => void }) {
   const [q, setQ] = useState('')
+  const language = getLanguage()
   const groups = useMemo(() => {
     const k = q.trim().toLowerCase()
     const list = PRESETS.filter((p) => !p.hidden && (!k || `${p.name} ${p.description} ${p.baseUrl}`.toLowerCase().includes(k)))
     return (Object.keys(CATEGORY_LABELS) as PresetCategory[]).map((c) => ({ c, items: list.filter((p) => p.category === c) })).filter((g) => g.items.length)
-  }, [q])
+  }, [q, language])
   return (
     <div>
       <div className="relative mb-5">
         <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-subtle" />
-        <Input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索供应商…" className="pl-9" aria-label="搜索供应商" />
+        <Input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr("搜索供应商…")} className="pl-9" aria-label={tr("搜索供应商")} />
       </div>
       <div className="space-y-5">
         {groups.map(({ c, items }) => (
@@ -244,7 +246,7 @@ function PresetGallery({ onPick }: { onPick: (p: ProviderPreset) => void }) {
             </div>
           </section>
         ))}
-        {!groups.length ? <div className="py-10 text-center text-[13px] text-subtle">没有匹配的接入方式，可以清空搜索后选择「通用中转站」。</div> : null}
+        {!groups.length ? <div className="py-10 text-center text-[13px] text-subtle">{tr("没有匹配的接入方式，可以清空搜索后选择「通用中转站」。")}</div> : null}
       </div>
     </div>
   )
@@ -278,10 +280,10 @@ function ModelPicker({ draft, value, onChange, id, placeholder }: { draft: Draft
       const list = await api.listProviderModels(toInput(draft), refresh)
       if (!current()) return
       setModels(list)
-      if (!list.length) toast('接口没有返回模型列表，请手动填写')
+      if (!list.length) toast(tr("接口没有返回模型列表，请手动填写"))
     } catch (e) {
       if (!current()) return
-      toast.error('获取模型列表失败', { description: (e as Error).message })
+      toast.error(tr("获取模型列表失败"), { description: (e as Error).message })
       setModels(null)
     } finally {
       if (current()) setLoading(false)
@@ -292,42 +294,39 @@ function ModelPicker({ draft, value, onChange, id, placeholder }: { draft: Draft
   return (
     <div className="space-y-2">
       <div className="flex gap-2">
-        <Input id={id} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder ?? '例如 deepseek-chat'} className="font-mono" spellCheck={false} />
+        <Input id={id} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder ?? tr("例如 deepseek-chat")} className="font-mono" spellCheck={false} />
         <PopoverBox
           align="end"
           className="w-80 p-0"
           trigger={
             <Button type="button" onClick={() => !models && !loading && void load()} className="shrink-0">
               {loading ? <Loader2 className="animate-spin" /> : <ListFilter />}
-              模型列表
-            </Button>
+              {tr("模型列表")}</Button>
           }
         >
           <div className="border-b border-border p-2">
-            <Input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={models ? `筛选 ${models.length} 个模型` : '加载中…'} autoFocus aria-label="筛选模型" />
+            <Input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={models ? tr("筛选 {0} 个模型", models.length) : tr("加载中…")} autoFocus aria-label={tr("筛选模型")} />
           </div>
           <div className="max-h-72 overflow-y-auto p-1">
             {loading ? (
               <div className="flex items-center justify-center gap-2 py-8 text-[13px] text-muted">
-                <Loader2 className="size-4 animate-spin" /> 正在向供应商请求…
-              </div>
+                <Loader2 className="size-4 animate-spin" /> {tr(" 正在向供应商请求…")}</div>
             ) : shown.length ? (
               shown.map((m) => (
                 <PopoverClose asChild key={m}>
                   <button onClick={() => onChange(m)} className={cn('flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left font-mono text-[12.5px] hover:bg-accent-soft', m === value && 'text-accent')}>
-                    <span className="truncate">{m}{recent.has(m) ? <span className="ml-2 font-sans text-[10px] text-subtle">最近成功</span> : null}</span>
+                    <span className="truncate">{m}{recent.has(m) ? <span className="ml-2 font-sans text-[10px] text-subtle">{tr("最近成功")}</span> : null}</span>
                     {m === value ? <Check className="size-3.5 shrink-0" /> : null}
                   </button>
                 </PopoverClose>
               ))
             ) : (
-              <div className="py-8 text-center text-[12.5px] text-subtle">{models ? '没有匹配的模型' : '需要先填写接口地址和 Key'}</div>
+              <div className="py-8 text-center text-[12.5px] text-subtle">{models ? tr("没有匹配的模型") : tr("需要先填写接口地址和 Key")}</div>
             )}
           </div>
           <div className="flex justify-end border-t border-border p-1.5">
             <Button variant="ghost" size="sm" onClick={() => void load(true)} loading={loading}>
-              重新获取
-            </Button>
+              {tr("重新获取")}</Button>
           </div>
         </PopoverBox>
       </div>
@@ -440,10 +439,10 @@ function ProviderEditor({ open, onOpenChange, initial }: { open: boolean; onOpen
     try {
       const info = await api.providerModelInfo(toInput(draft))
       if (version !== infoOperation.current || latestDraft.current !== currentDraft) return
-      if (info) { setDraft({ ...draft, modelInfo: info }); setInfoMessage('已读取接口提供的信息；这不代表能力已经实测。') }
-      else setInfoMessage('该接口未提供可用的模型元数据，可依据供应商文档手动填写。')
+      if (info) { setDraft({ ...draft, modelInfo: info }); setInfoMessage(tr("已读取接口提供的信息；这不代表能力已经实测。")) }
+      else setInfoMessage(tr("该接口未提供可用的模型元数据，可依据供应商文档手动填写。"))
     } catch (e) {
-      if (version === infoOperation.current && latestDraft.current === currentDraft) setInfoMessage(`读取失败：${(e as Error).message}。已填写的信息保留。`)
+      if (version === infoOperation.current && latestDraft.current === currentDraft) setInfoMessage(tr("读取失败：{0}。已填写的信息保留。", (e as Error).message))
     } finally { if (version === infoOperation.current) setReadingInfo(false) }
   }
   const setWindow = (value: string) => {
@@ -471,13 +470,13 @@ function ProviderEditor({ open, onOpenChange, initial }: { open: boolean; onOpen
     setSaving(true)
     try {
       const saved = await api.saveProvider(toInput(draft))
-      toast.success(isNew ? `已添加 ${saved.name}` : '已保存', {
-        action: isNew ? { label: '立即使用', onClick: () => void switchTo(saved.id, saved.name) } : undefined,
+      toast.success(isNew ? tr("已添加 {0}", saved.name) : tr("已保存"), {
+        action: isNew ? { label: tr("立即使用"), onClick: () => void switchTo(saved.id, saved.name) } : undefined,
       })
       onOpenChange(false)
     } catch (e) {
       setFormError((e as Error).message)
-      toast.error('保存失败', { description: (e as Error).message })
+      toast.error(tr("保存失败"), { description: (e as Error).message })
     } finally {
       setSaving(false)
     }
@@ -518,39 +517,36 @@ function ProviderEditor({ open, onOpenChange, initial }: { open: boolean; onOpen
       onOpenChange={(v) => { if (!saving) onOpenChange(v) }}
       className="w-[min(680px,calc(100vw-48px))]"
       title={
-        step === 'ready' ? '模型已保存并选择' : step === 'preset' ? (
-          '选择接入方式'
+        step === 'ready' ? tr("模型已保存并选择") : step === 'preset' ? (
+          tr("选择接入方式")
         ) : (
           <span className="flex items-center gap-2.5">
             {isNew && !draft?.id ? (
-              <Button variant="ghost" size="icon-sm" disabled={saving} onClick={() => { operation.current++; setTesting(false); setTest(null); setStep('preset') }} aria-label="返回">
+              <Button variant="ghost" size="icon-sm" disabled={saving} onClick={() => { operation.current++; setTesting(false); setTest(null); setStep('preset') }} aria-label={tr("返回")}>
                 <ArrowLeft />
               </Button>
             ) : null}
-            {isNew ? `添加 ${preset?.category === 'custom' ? '自定义供应商' : (preset?.name ?? '')}` : `编辑 ${draft?.name ?? ''}`}
+            {isNew ? tr("添加 {0}", preset?.category === 'custom' ? tr("自定义供应商") : (preset?.name ?? '')) : tr("编辑 {0}", draft?.name ?? '')}
           </span>
         )
       }
-      description={step === 'preset' ? '从预设开始，地址和推荐参数会自动填好。' : undefined}
+      description={step === 'preset' ? tr("从预设开始，地址和推荐参数会自动填好。") : undefined}
       footer={
-        step === 'ready' ? <><Button onClick={() => setStep('form')}>调整配置</Button><Button onClick={() => onOpenChange(false)}>完成</Button></> : step === 'form' && draft ? (
+        step === 'ready' ? <><Button onClick={() => setStep('form')}>{tr("调整配置")}</Button><Button onClick={() => onOpenChange(false)}>{tr("完成")}</Button></> : step === 'form' && draft ? (
           <div className="w-full space-y-3">
             {test?.protection ? <ConnectionStatus value={test.protection} /> : null}
             {formError ? <p role="alert" className="max-h-24 overflow-y-auto rounded-lg bg-danger-soft p-3 text-[12.5px] text-danger">{formError}</p> : null}
             {testing || test ? <div role="status" className={cn('max-h-28 overflow-y-auto rounded-lg border px-3 py-2.5 text-[12.5px] leading-relaxed break-words', test ? test.ok ? 'border-success/30 text-success' : 'border-danger/30 text-danger' : 'border-border text-muted')}>
-              {testing ? '正在测试提交时的配置…修改配置后，本次结果不再适用。' : <>{test?.scope ? `${{ text: '短文本', tools: '工具调用', image: '图片识别' }[test.scope]} · ` : ''}{test?.checkedAt ? `${fmtDateTime(test.checkedAt)} · ` : ''}{test?.ok ? `通过 · ${fmtMs(test.latencyMs)} · ${test.message}` : test?.message}</>}
+              {testing ? tr("正在测试提交时的配置…修改配置后，本次结果不再适用。") : <>{test?.scope ? `${{ text: tr("短文本"), tools: tr("工具调用"), image: tr("图片识别") }[test.scope]} · ` : ''}{test?.checkedAt ? `${fmtDateTime(test.checkedAt)} · ` : ''}{test?.ok ? tr("通过 · {0} · {1}", fmtMs(test.latencyMs), test.message) : test?.message}</>}
             </div> : null}
             <div className="flex justify-end gap-2">
             <Button onClick={() => void runTest()} disabled={saving || testing || !!urlError || !draft.model.trim()}>
               <Wifi />
-              测试
-            </Button>
+              {tr("测试")}</Button>
             <Button onClick={save} disabled={saving || testing || !!urlError || !draft.model.trim()}>
-              仅保存
-            </Button>
+              {tr("仅保存")}</Button>
             <Button variant="primary" onClick={() => void runTest(true)} loading={saving || testing} disabled={!!urlError || !draft.model.trim()}>
-              测试并启用
-            </Button>
+              {tr("测试并启用")}</Button>
             </div>
           </div>
         ) : undefined
@@ -558,9 +554,9 @@ function ProviderEditor({ open, onOpenChange, initial }: { open: boolean; onOpen
     >
       {step === 'ready' && ready ? (
         <div className="space-y-5">
-          <div className="rounded-xl border border-success/30 bg-success-soft p-4"><p className="text-[14px] font-medium text-success">短文本连接测试通过</p><p className="mt-1 text-[13px] text-muted">{ready.provider.name} · <span className="font-mono">{ready.provider.model}</span></p><p className="mt-2 text-[12px] leading-relaxed text-muted">工具、图像和长会话能力需要分别验证。当前选择会应用于下一条请求。</p></div>
-          <div className="space-y-3"><p className="text-[14px] font-medium">{state?.accio.takenOver || state?.accio.launchedByUs ? '下一步：在 Accio 中发一条消息' : '下一步：启动并接入 Accio'}</p><p className="text-[13px] leading-relaxed text-muted">{state?.accio.running && !state.accio.takenOver && !state.accio.launchedByUs ? '接入需要重启 Accio，正在进行的任务会中断。' : '真实调用后，可在总览和用量页看到实际模型与调用结果。'}</p><StartAccioButton /></div>
-          {logs.some((l) => l.providerId === ready.provider.id && l.ts >= ready.at && l.status === 'ok') ? <p role="status" className="text-[13px] text-success">已观察到该供应商的成功请求。</p> : null}
+          <div className="rounded-xl border border-success/30 bg-success-soft p-4"><p className="text-[14px] font-medium text-success">{tr("短文本连接测试通过")}</p><p className="mt-1 text-[13px] text-muted">{ready.provider.name} · <span className="font-mono">{ready.provider.model}</span></p><p className="mt-2 text-[12px] leading-relaxed text-muted">{tr("工具、图像和长会话能力需要分别验证。当前选择会应用于下一条请求。")}</p></div>
+          <div className="space-y-3"><p className="text-[14px] font-medium">{state?.accio.takenOver || state?.accio.launchedByUs ? tr("下一步：在 Accio 中发一条消息") : tr("下一步：启动并接入 Accio")}</p><p className="text-[13px] leading-relaxed text-muted">{state?.accio.running && !state.accio.takenOver && !state.accio.launchedByUs ? tr("接入需要重启 Accio，正在进行的任务会中断。") : tr("真实调用后，可在总览和用量页看到实际模型与调用结果。")}</p><StartAccioButton /></div>
+          {logs.some((l) => l.providerId === ready.provider.id && l.ts >= ready.at && l.status === 'ok') ? <p role="status" className="text-[13px] text-success">{tr("已观察到该供应商的成功请求。")}</p> : null}
         </div>
       ) : step === 'preset' ? (
         <PresetGallery
@@ -572,12 +568,12 @@ function ProviderEditor({ open, onOpenChange, initial }: { open: boolean; onOpen
       ) : draft ? (
         <fieldset disabled={saving} className="min-w-0 space-y-5">
           <div className="grid grid-cols-2 gap-4">
-            <Field label="名称" htmlFor="pv-name">
-              <Input id="pv-name" value={draft.name} onChange={(e) => set('name', e.target.value)} placeholder={preset?.name ?? '给它起个名字'} />
+            <Field label={tr("名称")} htmlFor="pv-name">
+              <Input id="pv-name" value={draft.name} onChange={(e) => set('name', e.target.value)} placeholder={preset?.name ?? tr("给它起个名字")} />
             </Field>
-            <Field label="接口类型">
+            <Field label={tr("接口类型")}>
               <Segmented
-                label="接口类型"
+                label={tr("接口类型")}
                 value={draft.kind}
                 onChange={(v) => set('kind', v)}
                 options={(['openai', 'anthropic', 'gemini'] as ProviderKind[]).map((k) => ({ value: k, label: KIND_LABEL[k] }))}
@@ -585,20 +581,20 @@ function ProviderEditor({ open, onOpenChange, initial }: { open: boolean; onOpen
               />
             </Field>
           </div>
-          {draft.kind === 'openai' ? <Field label="OpenAI 接口协议" hint="Codex 类分组通常使用 Responses；以网关提供的接入说明为准。">
-            <Segmented label="OpenAI 接口协议" value={draft.openaiApi} onChange={(v) => set('openaiApi', v)} options={[{ value: 'chat', label: 'Chat Completions' }, { value: 'responses', label: 'Responses' }]} />
+          {draft.kind === 'openai' ? <Field label={tr("OpenAI 接口协议")} hint={tr("Codex 类分组通常使用 Responses；以网关提供的接入说明为准。")}>
+            <Segmented label={tr("OpenAI 接口协议")} value={draft.openaiApi} onChange={(v) => set('openaiApi', v)} options={[{ value: 'chat', label: 'Chat Completions' }, { value: 'responses', label: 'Responses' }]} />
           </Field> : null}
           <Field
-            label="接口地址"
+            label={tr("接口地址")}
             htmlFor="pv-url"
             error={urlError}
-            hint="可粘贴基础地址或完整接口地址，离开输入框后自动识别协议并整理路径。"
+            hint={tr("可粘贴基础地址或完整接口地址，离开输入框后自动识别协议并整理路径。")}
           >
             <Input id="pv-url" value={draft.baseUrl} onChange={(e) => set('baseUrl', e.target.value)} onBlur={normalizeAddress} className="font-mono" spellCheck={false} />
           </Field>
           {preset?.category === 'relay' ? <div className="rounded-lg border border-border bg-fg/[0.025] px-3 py-2.5 text-[12px] leading-relaxed text-muted">
-            <p>填写已部署网关的客户端 API Key，不要填写管理密钥、订阅账号登录令牌或 Cookie。中转服务能够接触你的请求内容，账号限制仍取决于服务方规则。</p>
-            {preset.docsUrl ? <button type="button" className="mt-1 inline-flex items-center gap-1 text-accent hover:underline" onClick={() => void api.openExternal(preset.docsUrl!)}>项目接入说明 <ExternalLink className="size-3" /></button> : null}
+            <p>{tr("填写已部署网关的客户端 API Key，不要填写管理密钥、订阅账号登录令牌或 Cookie。中转服务能够接触你的请求内容，账号限制仍取决于服务方规则。")}</p>
+            {preset.docsUrl ? <button type="button" className="mt-1 inline-flex items-center gap-1 text-accent hover:underline" onClick={() => void api.openExternal(preset.docsUrl!)}>{tr("项目接入说明 ")}<ExternalLink className="size-3" /></button> : null}
           </div> : null}
           <Field
             label={
@@ -606,129 +602,128 @@ function ProviderEditor({ open, onOpenChange, initial }: { open: boolean; onOpen
                 API Key
                 {preset?.keyUrl ? (
                   <button type="button" onClick={() => void api.openExternal(preset.keyUrl!)} className="inline-flex items-center gap-1 text-[12px] font-normal text-accent hover:underline">
-                    获取 Key <ExternalLink className="size-3" />
+                    {tr("获取 Key ")}<ExternalLink className="size-3" />
                   </button>
                 ) : null}
               </span>
             }
             htmlFor="pv-key"
-            hint={preset?.category === 'local' ? '本地模型通常不需要 Key，可以留空。' : '使用 Windows 数据保护加密保存在本机，界面上只显示前后几位。'}
+            hint={preset?.category === 'local' ? tr("本地模型通常不需要 Key，可以留空。") : tr("使用 Windows 数据保护加密保存在本机，界面上只显示前后几位。")}
           >
             <SecretInput
               id="pv-key"
               value={draft.apiKey}
               onChange={(e) => setDraft((d) => (d ? { ...d, apiKey: e.target.value, keyTouched: true, modelInfo: undefined } : d))}
-              placeholder={draft.hasKey && !draft.keyTouched ? `已保存 ${draft.keyMasked}（留空保持不变）` : 'sk-…'}
+              placeholder={draft.hasKey && !draft.keyTouched ? tr("已保存 {0}（留空保持不变）", draft.keyMasked) : 'sk-…'}
             />
           </Field>
-          <Field label="默认模型" htmlFor="pv-model" hint="Accio 里选择的任何模型都会被替换成它，除非在下方单独映射。">
+          <Field label={tr("默认模型")} htmlFor="pv-model" hint={tr("Accio 里选择的任何模型都会被替换成它，除非在下方单独映射。")}>
             <ModelPicker id="pv-model" draft={draft} value={draft.model} onChange={(v) => set('model', v)} />
           </Field>
           <div className="rounded-lg border border-border bg-fg/[0.025] px-3 py-2.5 text-[12px] leading-relaxed text-muted">
-            <p>{modelInfo?.windowKind === 'input' ? '输入上限' : '上下文窗口'}：{modelInfo?.contextWindow ? `${fmtTokens(modelInfo.contextWindow)} Token` : '未知'} · 最大输出：{modelInfo?.maxOutputTokens ? `${fmtTokens(modelInfo.maxOutputTokens)} Token` : '未知'}</p>
-            <p>工具：{modelInfo?.tools === undefined ? '未确认' : modelInfo.tools ? '资料支持' : '资料不支持'} · 图像：{modelInfo?.vision === undefined ? '未确认' : modelInfo.vision ? '资料支持' : '资料不支持'}</p>
-            {modelInfo ? <p className="mt-1 text-subtle">来源：{{ official: '官方资料', api: '供应商接口', user: '手动填写' }[modelInfo.source]} · {fmtDateTime(modelInfo.checkedAt)}{modelInfo.sourceUrl ? <button type="button" className="ml-2 text-accent hover:underline" onClick={() => void api.openExternal(modelInfo.sourceUrl!)}>查看来源</button> : null}</p> : <p className="mt-1 text-subtle">短文本通过不代表工具和图像可用；可展开下方模型信息核对。</p>}
+            <p>{modelInfo?.windowKind === 'input' ? tr("输入上限") : tr("上下文窗口")}：{modelInfo?.contextWindow ? `${fmtTokens(modelInfo.contextWindow)} Token` : tr("未知")} {tr(" · 最大输出：")}{modelInfo?.maxOutputTokens ? `${fmtTokens(modelInfo.maxOutputTokens)} Token` : tr("未知")}</p>
+            <p>{tr("工具：")}{modelInfo?.tools === undefined ? tr("未确认") : modelInfo.tools ? tr("资料支持") : tr("资料不支持")} {tr(" · 图像：")}{modelInfo?.vision === undefined ? tr("未确认") : modelInfo.vision ? tr("资料支持") : tr("资料不支持")}</p>
+            {modelInfo ? <p className="mt-1 text-subtle">{tr("来源：")}{{ official: tr("官方资料"), api: tr("供应商接口"), user: tr("手动填写") }[modelInfo.source]} · {fmtDateTime(modelInfo.checkedAt)}{modelInfo.sourceUrl ? <button type="button" className="ml-2 text-accent hover:underline" onClick={() => void api.openExternal(modelInfo.sourceUrl!)}>{tr("查看来源")}</button> : null}</p> : <p className="mt-1 text-subtle">{tr("短文本通过不代表工具和图像可用；可展开下方模型信息核对。")}</p>}
           </div>
-          <p className="text-[12px] leading-relaxed text-subtle">模型列表缓存 5 分钟。连接测试只验证短文本，最多请求 1024 个输出 Token，不额外开启思考，可能产生费用。检测费用不计入 Accio 请求统计。</p>
+          <p className="text-[12px] leading-relaxed text-subtle">{tr("模型列表缓存 5 分钟。连接测试只验证短文本，最多请求 1024 个输出 Token，不额外开启思考，可能产生费用。检测费用不计入 Accio 请求统计。")}</p>
           {initial && initial !== 'new' && initial.keyError && !draft.keyTouched ? <p role="alert" className="text-[12.5px] text-danger">{initial.keyError}</p> : null}
-          <Section title="可选能力检测" description="需要工具或图片功能时分别检查；不会自动调用">
-            <p className="text-[12px] leading-relaxed text-subtle">每次发送一个最多 1024 输出 Token 的请求，可能收费。工具检测只要求返回固定参数，不执行操作；图片检测只发送内置的红色方块。结果仅对应本次配置，不代表长会话或完整工具循环已经通过。</p>
-            <div className="flex gap-2"><Button size="sm" disabled={saving || testing || !!urlError || !draft.model.trim()} onClick={() => void runTest(false, 'tools')}>检测工具调用</Button><Button size="sm" disabled={saving || testing || !!urlError || !draft.model.trim()} onClick={() => void runTest(false, 'image')}>检测图片识别</Button></div>
+          <Section title={tr("可选能力检测")} description={tr("需要工具或图片功能时分别检查；不会自动调用")}>
+            <p className="text-[12px] leading-relaxed text-subtle">{tr("每次发送一个最多 1024 输出 Token 的请求，可能收费。工具检测只要求返回固定参数，不执行操作；图片检测只发送内置的红色方块。结果仅对应本次配置，不代表长会话或完整工具循环已经通过。")}</p>
+            <div className="flex gap-2"><Button size="sm" disabled={saving || testing || !!urlError || !draft.model.trim()} onClick={() => void runTest(false, 'tools')}>{tr("检测工具调用")}</Button><Button size="sm" disabled={saving || testing || !!urlError || !draft.model.trim()} onClick={() => void runTest(false, 'image')}>{tr("检测图片识别")}</Button></div>
           </Section>
 
-          <Section title="模型信息与窗口" description="读取供应商元数据，或依据文档填写；只适用于当前默认模型">
-            <div className="flex flex-wrap items-center gap-3"><Button type="button" size="sm" loading={readingInfo} disabled={!draft.model.trim() || !!urlError} onClick={() => void readInfo()}>读取模型信息</Button><span className="text-[12px] text-subtle">读取元数据，不发送生成请求；缓存 5 分钟。</span></div>
+          <Section title={tr("模型信息与窗口")} description={tr("读取供应商元数据，或依据文档填写；只适用于当前默认模型")}>
+            <div className="flex flex-wrap items-center gap-3"><Button type="button" size="sm" loading={readingInfo} disabled={!draft.model.trim() || !!urlError} onClick={() => void readInfo()}>{tr("读取模型信息")}</Button><span className="text-[12px] text-subtle">{tr("读取元数据，不发送生成请求；缓存 5 分钟。")}</span></div>
             {infoMessage ? <p role="status" className="text-[12px] leading-relaxed text-muted">{infoMessage}</p> : null}
-            <Field label="上下文窗口 Token" htmlFor="pv-context" hint="手动填写会标记为用户提供。未知可留空；它不会改变 Accio 的自动压缩阈值。">
-              <Input id="pv-context" value={modelInfo?.contextWindow ?? ''} onChange={(e) => setWindow(e.target.value.replace(/[^\d]/g, ''))} placeholder="未知" className="w-48 tabular" />
+            <Field label={tr("上下文窗口 Token")} htmlFor="pv-context" hint={tr("手动填写会标记为用户提供。未知可留空；它不会改变 Accio 的自动压缩阈值。")}>
+              <Input id="pv-context" value={modelInfo?.contextWindow ?? ''} onChange={(e) => setWindow(e.target.value.replace(/[^\d]/g, ''))} placeholder={tr("未知")} className="w-48 tabular" />
             </Field>
-            {modelInfo?.maxOutputTokens ? <Button size="sm" onClick={() => set('maxOutputTokens', String(Math.min(Number(draft.maxOutputTokens) || 16384, modelInfo.maxOutputTokens!)))}>按已知输出上限调整</Button> : null}
-            {modelInfo?.thinking && draft.kind === 'anthropic' ? <Button size="sm" onClick={() => set('thinking', modelInfo.thinking!)}>采用资料建议的思考模式</Button> : null}
-            <p className="text-[12px] leading-relaxed text-subtle">每条模型映射可能指向不同的模型，不能共用这里的窗口。切换到较小窗口前，应先在 Accio 中整理会话或新建会话。</p>
+            {modelInfo?.maxOutputTokens ? <Button size="sm" onClick={() => set('maxOutputTokens', String(Math.min(Number(draft.maxOutputTokens) || 16384, modelInfo.maxOutputTokens!)))}>{tr("按已知输出上限调整")}</Button> : null}
+            {modelInfo?.thinking && draft.kind === 'anthropic' ? <Button size="sm" onClick={() => set('thinking', modelInfo.thinking!)}>{tr("采用资料建议的思考模式")}</Button> : null}
+            <p className="text-[12px] leading-relaxed text-subtle">{tr("每条模型映射可能指向不同的模型，不能共用这里的窗口。切换到较小窗口前，应先在 Accio 中整理会话或新建会话。")}</p>
           </Section>
 
-          <Section title="模型映射" description={draft.overrides.length ? `${draft.overrides.length} 条规则` : '按 Accio 里选的模型分别指定目标，例如把轻量模型映射到便宜的模型'}>
+          <Section title={tr("模型映射")} description={draft.overrides.length ? tr("{0} 条规则", draft.overrides.length) : tr("按 Accio 里选的模型分别指定目标，例如把轻量模型映射到便宜的模型")}>
             {draft.overrides.map((o, i) => (
               <div key={i} className="flex items-center gap-2">
                 <div className="min-w-0 flex-1">
                   <SelectBox
-                    label="Accio 模型"
+                    label={tr("Accio 模型")}
                     value={o.from || undefined}
                     onChange={(v) => set('overrides', draft.overrides.map((x, j) => (j === i ? { ...x, from: v } : x)))}
                     options={accioOptions.length ? accioOptions : [{ value: o.from || 'auto', label: o.from || 'auto' }]}
-                    placeholder="Accio 中选择的模型"
+                    placeholder={tr("Accio 中选择的模型")}
                   />
                 </div>
                 <span className="text-subtle">→</span>
                 <div className="min-w-0 flex-1">
-                  <Input value={o.to} onChange={(e) => set('overrides', draft.overrides.map((x, j) => (j === i ? { ...x, to: e.target.value } : x)))} placeholder="目标模型" className="font-mono" aria-label="目标模型" />
+                  <Input value={o.to} onChange={(e) => set('overrides', draft.overrides.map((x, j) => (j === i ? { ...x, to: e.target.value } : x)))} placeholder={tr("目标模型")} className="font-mono" aria-label={tr("目标模型")} />
                 </div>
-                <Button variant="ghost" size="icon-sm" aria-label="删除映射" onClick={() => set('overrides', draft.overrides.filter((_, j) => j !== i))}>
+                <Button variant="ghost" size="icon-sm" aria-label={tr("删除映射")} onClick={() => set('overrides', draft.overrides.filter((_, j) => j !== i))}>
                   <X />
                 </Button>
               </div>
             ))}
             <Button size="sm" onClick={() => set('overrides', [...draft.overrides, { from: '', to: '' }])}>
               <Plus />
-              添加映射
-            </Button>
+              {tr("添加映射")}</Button>
           </Section>
 
-          <Section title="高级参数" description="输出长度、思考、缓存、采样和自定义请求头">
-            <p className="text-[12px] leading-relaxed text-muted">连接保护：相同地址与凭据最多 4 个并发请求；HTTP 429 后按 Retry-After 等待（缺失时 60 秒）。不会自动重试、切换账户或跟随接口重定向。这些措施不能保证账号不受限。</p>
-            {/^http:\/\//i.test(draft.baseUrl) ? <ToggleRow label="允许远程 HTTP" hint="仅在你了解风险时开启：本机以外的 HTTP 会明文传输 Key 和会话。优先使用 HTTPS。本机服务不需要开启。" checked={draft.allowInsecureHttp} onChange={(v) => set('allowInsecureHttp', v)} /> : null}
-            <p className="text-[12px] leading-relaxed text-subtle">自动压缩由 Accio 管理，依据它所选模型的上下文窗口。BYOK 热切换不会同步该阈值；目标模型窗口较小时，建议先压缩或新建会话。提示缓存节省重复输入成本，不会扩大上下文窗口。</p>
-            <Field label="最大输出 Token" htmlFor="pv-max" hint="留空则沿用 Accio 的请求值（通常 16384）。部分模型上限较低，如 8192。">
-              <Input id="pv-max" value={draft.maxOutputTokens} onChange={(e) => set('maxOutputTokens', e.target.value.replace(/[^\d]/g, ''))} placeholder="沿用 Accio" className="w-48 tabular" />
+          <Section title={tr("高级参数")} description={tr("输出长度、思考、缓存、采样和自定义请求头")}>
+            <p className="text-[12px] leading-relaxed text-muted">{tr("连接保护：相同地址与凭据最多 4 个并发请求；HTTP 429 后按 Retry-After 等待（缺失时 60 秒）。不会自动重试、切换账户或跟随接口重定向。这些措施不能保证账号不受限。")}</p>
+            {/^http:\/\//i.test(draft.baseUrl) ? <ToggleRow label={tr("允许远程 HTTP")} hint={tr("仅在你了解风险时开启：本机以外的 HTTP 会明文传输 Key 和会话。优先使用 HTTPS。本机服务不需要开启。")} checked={draft.allowInsecureHttp} onChange={(v) => set('allowInsecureHttp', v)} /> : null}
+            <p className="text-[12px] leading-relaxed text-subtle">{tr("自动压缩由 Accio 管理，依据它所选模型的上下文窗口。BYOK 热切换不会同步该阈值；目标模型窗口较小时，建议先压缩或新建会话。提示缓存节省重复输入成本，不会扩大上下文窗口。")}</p>
+            <Field label={tr("最大输出 Token")} htmlFor="pv-max" hint={tr("留空则沿用 Accio 的请求值（通常 16384）。部分模型上限较低，如 8192。")}>
+              <Input id="pv-max" value={draft.maxOutputTokens} onChange={(e) => set('maxOutputTokens', e.target.value.replace(/[^\d]/g, ''))} placeholder={tr("沿用 Accio")} className="w-48 tabular" />
             </Field>
-            <ToggleRow label="转发推理强度" hint="把 Accio 里选择的推理强度（低/中/高）传给模型。旧模型可能不支持这个参数。" checked={draft.sendReasoningEffort} onChange={(v) => set('sendReasoningEffort', v)} />
+            <ToggleRow label={tr("转发推理强度")} hint={tr("把 Accio 里选择的推理强度（低/中/高）传给模型。旧模型可能不支持这个参数。")} checked={draft.sendReasoningEffort} onChange={(v) => set('sendReasoningEffort', v)} />
             {draft.kind === 'openai' && draft.openaiApi !== 'responses' ? (
-              <ToggleRow label="回传思考内容" hint="以 reasoning_content 字段回传历史思考，DeepSeek、Kimi 等思考模型在工具调用时需要。" checked={draft.sendReasoningContent} onChange={(v) => set('sendReasoningContent', v)} />
+              <ToggleRow label={tr("回传思考内容")} hint={tr("以 reasoning_content 字段回传历史思考，DeepSeek、Kimi 等思考模型在工具调用时需要。")} checked={draft.sendReasoningContent} onChange={(v) => set('sendReasoningContent', v)} />
             ) : null}
             {draft.kind === 'anthropic' ? (
               <>
-                <Field label="思考模式">
+                <Field label={tr("思考模式")}>
                   <Segmented
-                    label="思考模式"
+                    label={tr("思考模式")}
                     value={draft.thinking}
                     onChange={(v) => set('thinking', v)}
                     options={[
-                      { value: 'off', label: '不指定' },
-                      { value: 'adaptive', label: '自适应' },
-                      { value: 'budget', label: '固定预算' },
+                      { value: 'off', label: tr("不指定") },
+                      { value: 'adaptive', label: tr("自适应") },
+                      { value: 'budget', label: tr("固定预算") },
                     ]}
                   />
                 </Field>
                 {draft.thinking === 'budget' ? (
-                  <Field label="思考预算 Token" htmlFor="pv-budget" hint="适用于不支持自适应思考的旧模型，最少 1024。">
+                  <Field label={tr("思考预算 Token")} htmlFor="pv-budget" hint={tr("适用于不支持自适应思考的旧模型，最少 1024。")}>
                     <Input id="pv-budget" value={draft.thinkingBudget} onChange={(e) => set('thinkingBudget', e.target.value.replace(/[^\d]/g, ''))} className="w-48 tabular" />
                   </Field>
                 ) : null}
-                <ToggleRow label="提示缓存" hint="为系统提示和对话添加缓存断点。相同前缀才可能命中；压缩历史、修改工具或思考参数可能使缓存失效。首次写入也计费。" checked={draft.promptCaching} onChange={(v) => set('promptCaching', v)} />
+                <ToggleRow label={tr("提示缓存")} hint={tr("为系统提示和对话添加缓存断点。相同前缀才可能命中；压缩历史、修改工具或思考参数可能使缓存失效。首次写入也计费。")} checked={draft.promptCaching} onChange={(v) => set('promptCaching', v)} />
               </>
             ) : null}
-            <ToggleRow label="转发采样参数" hint="转发 temperature / top_p。较新的 Claude 和推理模型会拒绝这些参数。" checked={draft.sendSampling} onChange={(v) => set('sendSampling', v)} />
-            <Field label="自定义请求头" htmlFor="pv-headers" hint="每行一个，格式为「名称: 值」。保存时随 Key 加密；此编辑区会显示原值。禁止 Cookie 和传输控制头。">
+            <ToggleRow label={tr("转发采样参数")} hint={tr("转发 temperature / top_p。较新的 Claude 和推理模型会拒绝这些参数。")} checked={draft.sendSampling} onChange={(v) => set('sendSampling', v)} />
+            <Field label={tr("自定义请求头")} htmlFor="pv-headers" hint={tr("每行一个，格式为「名称: 值」。保存时随 Key 加密；此编辑区会显示原值。禁止 Cookie 和传输控制头。")}>
               <Textarea id="pv-headers" value={draft.headersText} onChange={(e) => set('headersText', e.target.value)} placeholder="X-Custom-Header: value" className="font-mono text-[12.5px]" rows={3} spellCheck={false} />
             </Field>
           </Section>
 
-          <Section title="价格" description="填写后用量页会估算花费（美元 / 百万 Token）">
-            <p className="text-[12px] leading-relaxed text-muted">单价用于 <span className="font-mono">{draft.pricingModel || '尚未指定的模型'}</span>{draft.pricingUpdatedAt ? ` · 更新于 ${fmtDateTime(draft.pricingUpdatedAt)}` : ' · 更新时间未记录'}。模型映射不会套用默认模型单价。</p>
-            {draft.pricingModel !== draft.model.trim() && [draft.priceIn, draft.priceOut, draft.priceCached, draft.priceWrite].some(Boolean) ? <div className="space-y-2 rounded-lg bg-warning-soft p-3 text-[12px] text-warning"><p>这些单价属于其他模型，当前模型的费用将显示为未知。请核对后填写或确认沿用。</p><Button size="sm" onClick={() => setDraft({ ...draft, pricingModel: draft.model.trim(), pricingUpdatedAt: Date.now() })}>确认这些单价用于当前模型</Button></div> : null}
-            {modelInfo?.pricing ? <Button size="sm" onClick={() => setDraft({ ...draft, priceIn: String(modelInfo.pricing!.input ?? ''), priceOut: String(modelInfo.pricing!.output ?? ''), priceCached: '', priceWrite: '', pricingModel: draft.model.trim(), pricingUpdatedAt: modelInfo.checkedAt })}>填入官方参考输入 / 输出单价</Button> : null}
+          <Section title={tr("价格")} description={tr("填写后用量页会估算花费（美元 / 百万 Token）")}>
+            <p className="text-[12px] leading-relaxed text-muted">{tr("单价用于 ")}<span className="font-mono">{draft.pricingModel || tr("尚未指定的模型")}</span>{draft.pricingUpdatedAt ? tr(" · 更新于 {0}", fmtDateTime(draft.pricingUpdatedAt)) : tr(" · 更新时间未记录")}{tr("。模型映射不会套用默认模型单价。")}</p>
+            {draft.pricingModel !== draft.model.trim() && [draft.priceIn, draft.priceOut, draft.priceCached, draft.priceWrite].some(Boolean) ? <div className="space-y-2 rounded-lg bg-warning-soft p-3 text-[12px] text-warning"><p>{tr("这些单价属于其他模型，当前模型的费用将显示为未知。请核对后填写或确认沿用。")}</p><Button size="sm" onClick={() => setDraft({ ...draft, pricingModel: draft.model.trim(), pricingUpdatedAt: Date.now() })}>{tr("确认这些单价用于当前模型")}</Button></div> : null}
+            {modelInfo?.pricing ? <Button size="sm" onClick={() => setDraft({ ...draft, priceIn: String(modelInfo.pricing!.input ?? ''), priceOut: String(modelInfo.pricing!.output ?? ''), priceCached: '', priceWrite: '', pricingModel: draft.model.trim(), pricingUpdatedAt: modelInfo.checkedAt })}>{tr("填入官方参考输入 / 输出单价")}</Button> : null}
             <div className="grid grid-cols-2 gap-3">
-              <Field label="输入" htmlFor="pv-pin">
+              <Field label={tr("输入")} htmlFor="pv-pin">
                 <Input id="pv-pin" value={draft.priceIn} onChange={(e) => set('priceIn', e.target.value)} placeholder="0.00" className="tabular" />
               </Field>
-              <Field label="输出" htmlFor="pv-pout">
+              <Field label={tr("输出")} htmlFor="pv-pout">
                 <Input id="pv-pout" value={draft.priceOut} onChange={(e) => set('priceOut', e.target.value)} placeholder="0.00" className="tabular" />
               </Field>
-              <Field label="缓存命中" htmlFor="pv-pc">
-                <Input id="pv-pc" value={draft.priceCached} onChange={(e) => set('priceCached', e.target.value)} placeholder="同输入" className="tabular" />
+              <Field label={tr("缓存命中")} htmlFor="pv-pc">
+                <Input id="pv-pc" value={draft.priceCached} onChange={(e) => set('priceCached', e.target.value)} placeholder={tr("同输入")} className="tabular" />
               </Field>
-              <Field label="缓存写入" htmlFor="pv-pw" hint="Claude 官方 5 分钟缓存留空按输入价 × 1.25，其余按输入价。">
-                <Input id="pv-pw" value={draft.priceWrite} onChange={(e) => set('priceWrite', e.target.value)} placeholder="自动估算" className="tabular" />
+              <Field label={tr("缓存写入")} htmlFor="pv-pw" hint={tr("Claude 官方 5 分钟缓存留空按输入价 × 1.25，其余按输入价。")}>
+                <Input id="pv-pw" value={draft.priceWrite} onChange={(e) => set('priceWrite', e.target.value)} placeholder={tr("自动估算")} className="tabular" />
               </Field>
             </div>
           </Section>
@@ -753,24 +748,24 @@ interface Health {
 
 function HealthLine({ h }: { h: Health }) {
   useTicker()
-  if (!h.last) return <div className="text-[12px] text-subtle">还没有请求经过它</div>
+  if (!h.last) return <div className="text-[12px] text-subtle">{tr("还没有请求经过它")}</div>
   const rate = h.requests ? Math.round(((h.requests - h.errors - (h.aborted ?? 0)) / h.requests) * 100) : undefined
   return (
     <div className="space-y-1 text-[12px]">
       <div className="flex items-center justify-between gap-3">
-        <span className="text-muted">今日</span>
-        <span className="truncate tabular">
-          {h.requests} 次{rate !== undefined ? ` · 成功率 ${rate}%` : ''}
-          {h.ttftMs !== undefined ? ` · 首字 ${fmtMs(h.ttftMs)}` : ''}
-          {h.estimatedRequests ? ` · 已估算 ${fmtCost(h.costUsd)}` : ''}
+        <span className="text-muted">{tr("今日")}</span>
+        <span className="min-w-0 text-right leading-relaxed tabular">
+          {h.requests} {tr(" 次")}{rate !== undefined ? tr(" · 成功率 {0}%", rate) : ''}
+          {h.ttftMs !== undefined ? tr(" · 首字 {0}", fmtMs(h.ttftMs)) : ''}
+          {h.estimatedRequests ? tr(" · 已估算 {0}", fmtCost(h.costUsd)) : ''}
         </span>
       </div>
       {h.last.status === 'error' ? (
         <div className="truncate text-danger" title={h.last.error}>
-          最近失败 · {timeAgo(h.last.ts)}：{(h.last.error ?? '').replace(/^\[Accio (?:Switch|BYOK)\]\s*/, '')}
+          {tr("最近失败 · ")}{timeAgo(h.last.ts)}：{(h.last.error ?? '').replace(/^\[Accio (?:Switch|BYOK)\]\s*/, '')}
         </div>
       ) : (
-        <div className="text-subtle">最近一次 {timeAgo(h.last.ts)} · {h.last.status === 'ok' ? '成功' : '已取消'}</div>
+        <div className="text-subtle">{tr("最近一次 ")}{timeAgo(h.last.ts)} · {h.last.status === 'ok' ? tr("成功") : tr("已取消")}</div>
       )}
     </div>
   )
@@ -820,52 +815,48 @@ function ProviderCard({ p, active, health, onEdit, onDelete }: { p: ProviderView
         </div>
         <Menu>
           <MenuTrigger asChild>
-            <Button variant="ghost" size="icon-sm" aria-label={`${p.name} 的更多操作`}>
+            <Button variant="ghost" size="icon-sm" aria-label={tr("{0} 的更多操作", p.name)}>
               <MoreHorizontal />
             </Button>
           </MenuTrigger>
           <MenuContent>
             <MenuItem onSelect={onEdit}>
               <Pencil />
-              编辑
-            </MenuItem>
+              {tr("编辑")}</MenuItem>
             <MenuItem onSelect={() => void runTest()}>
               <Wifi />
-              测试连接
-            </MenuItem>
+              {tr("测试连接")}</MenuItem>
             <MenuItem
               onSelect={() =>
-                void api.duplicateProvider(p.id).then((c) => c && toast.success(`已复制为 ${c.name}`))
+                void api.duplicateProvider(p.id).then((c) => c && toast.success(tr("已复制为 {0}", c.name)))
               }
             >
               <Copy />
-              复制
-            </MenuItem>
+              {tr("复制")}</MenuItem>
             <MenuSeparator />
             <MenuItem danger onSelect={onDelete}>
               <Trash2 />
-              删除
-            </MenuItem>
+              {tr("删除")}</MenuItem>
           </MenuContent>
         </Menu>
       </div>
 
       <dl className="mt-4 space-y-1.5 text-[12.5px]">
         <div className="flex items-center justify-between gap-3">
-          <dt className="text-muted">模型</dt>
-          <dd className={cn('truncate font-mono', !p.model && 'text-warning')}>{p.model || '未设置'}</dd>
+          <dt className="text-muted">{tr("模型")}</dt>
+          <dd className={cn('truncate font-mono', !p.model && 'text-warning')}>{p.model || tr("未设置")}</dd>
         </div>
         <div className="flex items-center justify-between gap-3">
           <dt className="text-muted">Key</dt>
           <dd className="flex items-center gap-1 truncate font-mono text-muted">
             <KeyRound className="size-3" />
-            {p.hasApiKey ? p.apiKeyMasked : '未设置'}
+            {p.hasApiKey ? p.apiKeyMasked : tr("未设置")}
           </dd>
         </div>
         {Object.keys(p.modelOverrides ?? {}).length ? (
           <div className="flex items-center justify-between gap-3">
-            <dt className="text-muted">映射</dt>
-            <dd>{Object.keys(p.modelOverrides).length} 条</dd>
+            <dt className="text-muted">{tr("映射")}</dt>
+            <dd>{Object.keys(p.modelOverrides).length} {tr(" 条")}</dd>
           </div>
         ) : null}
       </dl>
@@ -879,12 +870,11 @@ function ProviderCard({ p, active, health, onEdit, onDelete }: { p: ProviderView
         {testing ? (
           <span className="inline-flex items-center gap-1.5 text-muted">
             <Loader2 className="size-3.5 animate-spin" />
-            测试中…
-          </span>
+            {tr("测试中…")}</span>
         ) : test ? (
           <span className={cn('inline-flex min-w-0 items-center gap-1.5', test.ok ? 'text-success' : 'text-danger')} title={test.message}>
             {test.ok ? <Check className="size-3.5 shrink-0" /> : <X className="size-3.5 shrink-0" />}
-            <span className="truncate">{test.ok ? `短文本通过 · 首字 ${fmtMs(test.latencyMs)}` : test.message}</span>
+            <span className="truncate">{test.ok ? tr("短文本通过 · 首字 {0}", fmtMs(test.latencyMs)) : test.message}</span>
           </span>
         ) : null}
       </div>
@@ -893,14 +883,12 @@ function ProviderCard({ p, active, health, onEdit, onDelete }: { p: ProviderView
         {active ? (
           <Button variant="soft" className="flex-1" disabled>
             <Check />
-            已选择
-          </Button>
+            {tr("已选择")}</Button>
         ) : (
-          <Button className="flex-1" onClick={() => void switchTo(p.id, p.name)} disabled={!p.model} title={p.model ? undefined : '先设置默认模型'}>
-            使用
-          </Button>
+          <Button className="flex-1" onClick={() => void switchTo(p.id, p.name)} disabled={!p.model} title={p.model ? undefined : tr("先设置默认模型")}>
+            {tr("使用")}</Button>
         )}
-        <Button onClick={onEdit} aria-label="编辑">
+        <Button onClick={onEdit} aria-label={tr("编辑")}>
           <Pencil />
         </Button>
       </div>
@@ -915,14 +903,14 @@ function OfficialCard({ active, gateway, health }: { active: boolean; gateway: s
       <div className="flex items-start gap-3">
         <OfficialAvatar size={42} />
         <div className="min-w-0 flex-1">
-          <div className="text-[14px] font-semibold">Accio 官方</div>
+          <div className="text-[14px] font-semibold">{tr("Accio 官方")}</div>
           <div className="mt-0.5 flex items-center gap-1.5">
-            <Badge tone="outline">内置</Badge>
+            <Badge tone="outline">{tr("内置")}</Badge>
             <span className="truncate text-[11.5px] text-subtle">{hostOf(gateway)}</span>
           </div>
         </div>
       </div>
-      <p className="mt-4 text-[12.5px] leading-relaxed text-muted">请求原样转发到 Accio 网关，使用账号自带的模型和额度，Accio 里的模型选择照常生效。</p>
+      <p className="mt-4 text-[12.5px] leading-relaxed text-muted">{tr("请求原样转发到 Accio 网关，使用账号自带的模型和额度，Accio 里的模型选择照常生效。")}</p>
       <div className="mt-auto pt-4">
         <div className="mb-3 rounded-lg bg-fg/[0.035] px-3 py-2">
           <HealthLine h={health} />
@@ -930,12 +918,10 @@ function OfficialCard({ active, gateway, health }: { active: boolean; gateway: s
         {active ? (
           <Button variant="soft" className="w-full" disabled>
             <Check />
-            已选择
-          </Button>
+            {tr("已选择")}</Button>
         ) : (
-          <Button className="w-full" onClick={() => void switchTo(OFFICIAL_PROVIDER_ID, 'Accio 官方')}>
-            切回官方
-          </Button>
+          <Button className="w-full" onClick={() => void switchTo(OFFICIAL_PROVIDER_ID, tr("Accio 官方"))}>
+            {tr("切回官方")}</Button>
         )}
       </div>
     </Card>
@@ -952,7 +938,7 @@ export function ProvidersPage() {
 
   useEffect(() => {
     let current = true
-    const t = setTimeout(() => void api.usageStats(1).then((v) => { if (current) setToday(v) }).catch((e) => { if (current) { setToday(null); toast.error('读取用量失败', { id: 'usage-read-error', description: e.message }) } }), 200)
+    const t = setTimeout(() => void api.usageStats(1).then((v) => { if (current) setToday(v) }).catch((e) => { if (current) { setToday(null); toast.error(tr("读取用量失败"), { id: 'usage-read-error', description: e.message }) } }), 200)
     return () => { current = false; clearTimeout(t) }
   }, [latest])
 
@@ -993,8 +979,8 @@ export function ProvidersPage() {
   return (
     <>
       <PageHeader
-        title="模型接入"
-        description="Accio 通过 Accio BYOK 启动后，切换会在下一条请求生效，无需重启。"
+        title={tr("模型接入")}
+        description={tr("Accio 通过 Accio BYOK 启动后，切换会在下一条请求生效，无需重启。")}
         actions={
           <Button
             variant="primary"
@@ -1004,8 +990,7 @@ export function ProvidersPage() {
             }}
           >
             <Plus />
-            添加供应商
-          </Button>
+            {tr("添加供应商")}</Button>
         }
       />
       {state && providers.length > 0 ? <Card className="mb-4 flex flex-wrap items-center justify-between gap-3 px-4 py-3"><p className="text-[13px] text-muted">{effectState(state).label}</p><StartAccioButton /></Card> : null}
@@ -1032,21 +1017,21 @@ export function ProvidersPage() {
           className="flex min-h-[220px] flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border-strong text-muted transition hover:border-accent hover:bg-accent-soft/40 hover:text-accent"
         >
           <Plus className="size-6" />
-          <span className="text-[13px] font-medium">添加供应商</span>
-          <span className="text-[12px] text-subtle">16 个预设 · 支持任意兼容接口</span>
+          <span className="text-[13px] font-medium">{tr("添加供应商")}</span>
+          <span className="text-[12px] text-subtle">{tr("{0} 个预设 · 支持任意兼容接口", PRESETS.filter((p) => !p.hidden).length)}</span>
         </button>
       </div>
       <ProviderEditor open={open} onOpenChange={setOpen} initial={editing} />
       <Confirm
         open={!!deleting}
         onOpenChange={(v) => !v && setDeleting(null)}
-        title={`删除 ${deleting?.name ?? ''}？`}
-        description={deleting?.id === activeId ? '它是当前选中的来源，删除后会自动切回 Accio 官方。' : '保存的 Key 会一并删除，此操作不可撤销。'}
-        confirmText="删除"
+        title={tr("删除 {0}？", deleting?.name ?? '')}
+        description={deleting?.id === activeId ? tr("它是当前选中的来源，删除后会自动切回 Accio 官方。") : tr("保存的 Key 会一并删除，此操作不可撤销。")}
+        confirmText={tr("删除")}
         danger
         onConfirm={async () => {
           if (deleting) await api.deleteProvider(deleting.id)
-          toast('已删除')
+          toast(tr("已删除"))
         }}
       />
     </>

@@ -1,3 +1,4 @@
+import { getLanguage, tr } from '../../../shared/i18n.ts'
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
 
@@ -10,11 +11,11 @@ export function fmtTokens(n: number): string {
   if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 1 : 2)}M`
   if (n >= 10_000) return `${(n / 1000).toFixed(1)}K`
-  return n.toLocaleString('zh-CN')
+  return n.toLocaleString(getLanguage())
 }
 
 export function fmtNumber(n: number): string {
-  return n.toLocaleString('zh-CN')
+  return n.toLocaleString(getLanguage())
 }
 
 export function fmtCost(usd: number | undefined): string {
@@ -42,22 +43,22 @@ export function fmtBytes(n: number): string {
 export function timeAgo(ts: number | undefined): string {
   if (!ts) return '—'
   const s = Math.round((Date.now() - ts) / 1000)
-  if (s < 5) return '刚刚'
-  if (s < 60) return `${s} 秒前`
+  if (s < 5) return tr("刚刚")
+  if (s < 60) return tr("{0} 秒前", s)
   const m = Math.round(s / 60)
-  if (m < 60) return `${m} 分钟前`
+  if (m < 60) return tr("{0} 分钟前", m)
   const h = Math.round(m / 60)
-  if (h < 24) return `${h} 小时前`
+  if (h < 24) return tr("{0} 小时前", h)
   const d = Math.round(h / 24)
-  return d < 30 ? `${d} 天前` : new Date(ts).toLocaleDateString('zh-CN')
+  return d < 30 ? tr("{0} 天前", d) : new Date(ts).toLocaleDateString(getLanguage())
 }
 
 export function fmtDateTime(ts: number): string {
-  return new Date(ts).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+  return new Date(ts).toLocaleString(getLanguage(), { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
 }
 
 export function fmtTime(ts: number): string {
-  return new Date(ts).toLocaleTimeString('zh-CN', { hour12: false })
+  return new Date(ts).toLocaleTimeString(getLanguage(), { hour12: false })
 }
 
 export function hostOf(url: string): string {

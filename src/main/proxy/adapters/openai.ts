@@ -1,3 +1,4 @@
+import { tr } from '../../../shared/i18n.ts'
 import type { Provider } from '../../../shared/types.ts'
 import {
   UpstreamError,
@@ -82,6 +83,7 @@ export function toOpenAIMessages(req: AccioRequest, provider: Provider): Msg[] {
       } else if (p.inlineData?.data) {
         const mime = p.inlineData.mimeType.toLowerCase()
         if (IMAGE_MIME.has(mime)) items.push({ type: 'image_url', image_url: { url: `data:${mime};base64,${p.inlineData.data}` } })
+        // Wire-format fallback text stays stable when the display language changes.
         else items.push({ type: 'text', text: `[附件 ${mime}，当前模型接口不支持该类型]` })
       } else if (p.fileData?.fileUri) {
         const { fileUri, mimeType } = p.fileData
@@ -261,7 +263,7 @@ async function* stream(req: AccioRequest, ctx: AdapterContext): AsyncGenerator<A
     }
     if (choice.finish_reason) finish = choice.finish_reason
   }
-  if (!finish) throw new UpstreamError(`${ctx.provider.name}：响应未完整结束（缺少 finish_reason），请检查接口协议或重试`)
+  if (!finish) throw new UpstreamError(tr("{0}：响应未完整结束（缺少 finish_reason），请检查接口协议或重试", ctx.provider.name))
   for (const e of splitter.flush()) yield e
   for (const [, c] of [...calls.entries()].sort((a, b) => a[0] - b[0])) {
     if (!c.name) continue

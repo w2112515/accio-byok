@@ -1,3 +1,4 @@
+import { tr } from '../../../shared/i18n.ts'
 import type { ModelInfo, Provider } from '../../../shared/types.ts'
 import {
   UpstreamError,
@@ -72,6 +73,7 @@ export function toGeminiContents(req: AccioRequest, provider: Provider, model = 
         if (uri.startsWith('gs://') || uri.includes('generativelanguage.googleapis.com')) {
           parts.push({ fileData: { mimeType: p.fileData.mimeType, fileUri: uri } })
         } else {
+          // Preserve protocol fallback text independently of the display language.
           parts.push({ text: `[文件] ${uri}` })
         }
       } else if (p.text) {
@@ -165,7 +167,7 @@ async function* stream(req: AccioRequest, ctx: AdapterContext): AsyncGenerator<A
     if (!j) continue
     if (j.candidates?.length || j.usageMetadata || j.error || j.promptFeedback) ctx.onProgress?.()
     if (j.error) throw new UpstreamError(`${ctx.provider.name}：${j.error.message ?? JSON.stringify(j.error)}`)
-    if (j.promptFeedback?.blockReason) throw new UpstreamError(`${ctx.provider.name}：请求被拦截（${j.promptFeedback.blockReason}）`)
+    if (j.promptFeedback?.blockReason) throw new UpstreamError(tr("{0}：请求被拦截（{1}）", ctx.provider.name, j.promptFeedback.blockReason))
     if (j.usageMetadata) {
       const u = j.usageMetadata
       usage = {
@@ -198,10 +200,10 @@ async function* stream(req: AccioRequest, ctx: AdapterContext): AsyncGenerator<A
     }
     if (cand.finishReason) finish = cand.finishReason
   }
-  if (!finish) throw new UpstreamError(`${ctx.provider.name}：响应未完整结束（缺少 finishReason），请检查接口协议或重试`)
+  if (!finish) throw new UpstreamError(tr("{0}：响应未完整结束（缺少 finishReason），请检查接口协议或重试", ctx.provider.name))
   for (const c of calls) yield c
   if (finish && !['STOP', 'MAX_TOKENS'].includes(finish) && !calls.length) {
-    yield { type: 'text', text: `\n\n[生成结束：${finish}]` }
+    yield { type: 'text', text: tr("\n\n[生成结束：{0}]", finish) }
   }
   yield { type: 'finish', reason: finish, usage }
 }
