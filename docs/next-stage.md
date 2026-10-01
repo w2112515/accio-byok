@@ -2,7 +2,7 @@
 
 ## 1.4.1: Connection and recovery clarity / 状态与恢复体验已打磨
 
-2026-10-01. The approved follow-up is implemented and verified locally, preserving the existing design. Current-connection evidence is isolated; capability checks older than 30 days prompt manual review; the latest completed snapshot captured with Accio closed is read from disk. Real-account acceptance stays pending. Version 1.4.1 is a local build, not a published release.
+2026-10-01. The approved follow-up is implemented and verified locally, preserving the existing design. Current-connection evidence is isolated; capability checks older than 30 days prompt manual review; the latest completed snapshot captured with Accio closed is read from disk. Version 1.4.1 is distributed as a [public preview](https://github.com/w2112515/accio-byok/releases/tag/v1.4.1), with a Windows x64 installer, portable executable and SHA-256 checksums. Real-account acceptance stays pending.
 
 ### Changes / 改动
 
@@ -21,13 +21,13 @@
 - 已检查 980×660 中英文首页、备份状态和检测表单，按钮可达、重要提示可读。备份目录读取失败明确报错，未显示成“尚无备份”；恢复测试目录后最终便携包重新读取成功。这不等同于真实 Accio 打开恢复会话的验收。
 - Final artifacts are in `release/1.4.1`. The extracted installer `app.asar` matches `win-unpacked`; all six packaged build files match the final build, package version is 1.4.1, and `SHA256SUMS.txt` records both executables. The final portable walkthrough completed after the last source change.
 
-真实 OAuth、账号资格、付费调用、真实 Accio 恢复后继续工作、Windows 覆盖安装和登录自启仍待单独验收。安装器本轮核对内容一致性，没有执行安装。本次源码提交包含 1.4.0 功能与 1.4.1 打磨，安装包尚未发布为 Release；本地模拟服务已结束。
+真实 OAuth、账号资格、付费调用、真实 Accio 恢复后继续工作、Windows 覆盖安装和登录自启仍待单独验收。安装器本轮核对内容一致性，没有执行安装。1.4.1 公开测试版包含 1.4.0 功能与 1.4.1 打磨，Release 提供安装版、便携版及校验文件；发布不改变上述验证边界，本地模拟服务已结束。
 
 ## 1.4.0: Local delivery verified / 本地交付已验证
 
-2026-10-01. The approved six-part implementation is complete for local delivery, preserving the current English-first bilingual design and Electron/proxy/session architecture. At the user's direction, this round covers implementation and local simulation; real accounts will be verified separately. Version 1.4.0 has not been published or pushed.
+2026-10-01. The approved six-part implementation was completed for local delivery, preserving the current English-first bilingual design and Electron/proxy/session architecture. At the user's direction, this round covered implementation and local simulation; real accounts will be verified separately. Version 1.4.0 was not published separately; these changes are included in 1.4.1.
 
-已按确认的完整方案完成六项能力，并保留现有前端设计、英文优先双语界面和技术栈。依用户后续限定，本轮完成实现与本地模拟验证，真实账号稍后验收。1.4.0 仅本地交付，未提交 Git、推送或发布。
+已按确认的完整方案完成六项能力，并保留现有前端设计、英文优先双语界面和技术栈。依用户后续限定，本轮完成实现与本地模拟验证，真实账号稍后验收。1.4.0 当时仅本地交付，没有单独发布；相关改动现已包含在 1.4.1 中。
 
 ### Implemented / 已实现
 

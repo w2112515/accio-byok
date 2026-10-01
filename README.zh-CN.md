@@ -6,7 +6,7 @@
 
 > 社区工具，与阿里巴巴或 Accio 官方无关。不包含任何账号注册、换号或绕过额度的功能。
 
-当前源码为 **1.4.1 本地验证版（Windows x64），尚未发布**。[已公开版本仍为 1.3.0](https://github.com/w2112515/accio-byok/releases/tag/v1.3.0)。软件默认英文，可在顶部「Language / 语言」或设置中切换简体中文，下次启动保留所选语言。真实账号授权、付费推理及真实 Accio 账号恢复另行验收，本地模拟不代表这些项目已经通过。
+当前公开下载版本为 **[1.4.1 公开测试版（Windows x64）](https://github.com/w2112515/accio-byok/releases/tag/v1.4.1)**。软件默认英文，可在顶部「Language / 语言」或设置中切换简体中文，下次启动保留所选语言。真实账号授权、付费推理及真实 Accio 账号恢复另行验收，本地模拟不代表这些项目已经通过。
 
 ## 工作原理
 
@@ -39,7 +39,7 @@ Accio ──GATEWAY_BASE_URL──▶ Accio BYOK (127.0.0.1:18920)
 
 ## 使用
 
-1. 安装 [Accio-BYOK-Setup-1.3.0.exe](https://github.com/w2112515/accio-byok/releases/download/v1.3.0/Accio-BYOK-Setup-1.3.0.exe)，或运行 [便携版](https://github.com/w2112515/accio-byok/releases/download/v1.3.0/Accio-BYOK-1.3.0-portable.exe)。若旧版仍在运行，先从托盘退出，再打开新版。[SHA-256 校验文件](https://github.com/w2112515/accio-byok/releases/download/v1.3.0/SHA256SUMS.txt) 与安装产物同时提供。
+1. 安装 [Accio-BYOK-Setup-1.4.1.exe](https://github.com/w2112515/accio-byok/releases/download/v1.4.1/Accio-BYOK-Setup-1.4.1.exe)，或运行 [便携版](https://github.com/w2112515/accio-byok/releases/download/v1.4.1/Accio-BYOK-1.4.1-portable.exe)。若旧版仍在运行，先从托盘退出，再打开新版。[SHA-256 校验文件](https://github.com/w2112515/accio-byok/releases/download/v1.4.1/SHA256SUMS.txt) 与安装产物同时提供。
 2. 在「模型接入」添加供应商，选择认证方式并填写 Key 或登录。地址支持完整协议端点，离开输入框后自动整理并保留子路径。「测试并启用」会在通过后保存，再确认目标、计费与兼容性后切换；「仅保存」不切换。检测会消耗额度或产生费用，工具多轮续接最多两次请求；ChatGPT 套餐由服务端决定输出限制，其他检测最多请求 1024 输出 Token。检测费用不计入 Accio 汇总。百炼订阅禁止 API 测试工具，请保存后用 Accio 中符合规则的交互任务验证。
 3. 在成功页直接点「启动 Accio」。如果已经运行，确认后会重启一次并中断进行中的任务。启动完成只表示进程已运行。
 4. 在 Accio 发一条消息，从「总览」或「用量与诊断」核对实际模型与调用结果。以后通过托盘或右上角随时切换，下一条请求生效。
