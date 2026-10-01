@@ -1,4 +1,5 @@
 import { tr } from '../../../shared/i18n.ts'
+import { autoEffort } from '../../../shared/model-info.ts'
 import type { ModelInfo, Provider } from '../../../shared/types.ts'
 import {
   UpstreamError,
@@ -159,7 +160,7 @@ export function buildAnthropicRequest(
   const body: Record<string, unknown> = {
     model,
     messages: toAnthropicMessages(req, provider, model),
-    max_tokens: resolveMaxTokens(req, provider, 32000),
+    max_tokens: resolveMaxTokens(req, provider, 32000, model),
     stream: true,
   }
   if (req.systemInstruction) {
@@ -189,14 +190,14 @@ export function buildAnthropicRequest(
       betas.push(BINDING_BETA)
     }
     body.thinking = thinking
-  } else if (mode === 'budget') {
-    const budget = Math.max(1024, provider.thinkingBudget ?? 8000)
+  } else if (mode === 'budget' && !(provider.parameterMode === 'auto' && (body.max_tokens as number) <= 1024)) {
+    const budget = provider.parameterMode === 'auto' ? Math.max(1024, Math.min(provider.thinkingBudget ?? 8000, (body.max_tokens as number) - 1)) : Math.max(1024, provider.thinkingBudget ?? 8000)
     body.thinking = { type: 'enabled', budget_tokens: budget }
     if ((body.max_tokens as number) <= budget) body.max_tokens = budget + 4096
   }
 
   if (provider.sendReasoningEffort) {
-    const effort = clampEffort(req.reasoningEffort, ['low', 'medium', 'high', 'xhigh', 'max'])
+    const effort = provider.parameterMode === 'auto' ? autoEffort(provider, model) : clampEffort(req.reasoningEffort, ['low', 'medium', 'high', 'xhigh', 'max'])
     if (effort) body.output_config = { effort }
   }
   // Sampling parameters are rejected by current models and by any model while thinking.
@@ -328,7 +329,8 @@ async function describeModel(provider: Provider, fetch: FetchLike, signal?: Abor
   return {
     model: provider.model, contextWindow: positiveTokens(model.max_input_tokens), windowKind: 'input', maxOutputTokens: positiveTokens(model.max_tokens),
     vision: typeof capabilities?.image_input?.supported === 'boolean' ? capabilities.image_input.supported : undefined,
-    thinking: capabilities?.thinking?.types?.adaptive?.supported === true ? 'adaptive' : capabilities?.thinking?.types?.enabled?.supported === true ? 'budget' : undefined,
+    thinking: capabilities?.thinking?.types?.adaptive?.supported === true ? 'adaptive' : capabilities?.thinking?.types?.enabled?.supported === true ? 'budget' : capabilities?.thinking?.supported === false ? 'off' : undefined,
+    effortLevels: capabilities?.effort ? ['low', 'medium', 'high', 'xhigh', 'max'].filter((level) => capabilities.effort.supported === true && capabilities.effort[level]?.supported === true) : undefined,
     source: 'api', sourceUrl, checkedAt: Date.now(),
   }
 }

@@ -2,6 +2,7 @@ import { tr } from '../../../shared/i18n.ts'
 import type { ModelInfo, Provider } from '../../../shared/types.ts'
 import { createHash } from 'node:crypto'
 import { normalizeBaseUrl } from '../../../shared/provider-input.ts'
+import { usableModelInfo } from '../../../shared/model-info.ts'
 import { UpstreamError, type AccioRequest, type AdapterEvent } from '../accio.ts'
 
 export type FetchLike = (url: string, init: RequestInit) => Promise<Response>
@@ -56,9 +57,10 @@ export function hostOf(url: string): string {
 }
 
 /** Effective max output tokens: a provider-level value overrides what Accio asked for. */
-export function resolveMaxTokens(req: AccioRequest, provider: Provider, fallback: number): number {
+export function resolveMaxTokens(req: AccioRequest, provider: Provider, fallback: number, model = provider.model): number {
   const v = provider.maxOutputTokens || req.maxOutputTokens || fallback
-  return Math.max(1, Math.round(v))
+  const limit = provider.parameterMode === 'auto' ? usableModelInfo(provider, model)?.maxOutputTokens : undefined
+  return Math.max(1, Math.min(Math.round(v), limit ?? Infinity))
 }
 
 function extractErrorMessage(text: string): string {

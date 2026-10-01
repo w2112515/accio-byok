@@ -24,7 +24,7 @@ import {
 import { ConfigStore, validateSettings, type SecretBox } from './config.ts'
 import { LogStore } from './logs.ts'
 import { parseAccioRequest } from './proxy/accio.ts'
-import { ADAPTERS, streamByok } from './proxy/byok.ts'
+import { ADAPTERS, resolveTargetModel, streamByok } from './proxy/byok.ts'
 import { ModelListCache } from './model-list.ts'
 import { protectedFetch, redactProviderError } from './proxy/request-policy.ts'
 import { ProxyServer } from './proxy/server.ts'
@@ -363,14 +363,18 @@ async function activateWithReview(id: string): Promise<void> {
     if (!account?.connected || !account.planEnabled) throw new Error(tx('Sign in and enable access before switching.', '请先登录并启用访问权限再切换。'))
   }
   const prev = config.provider(config.activeProviderId)
-  const targetWindow = next ? usableModelInfo(next)?.contextWindow : undefined
-  const currentWindow = prev ? usableModelInfo(prev)?.contextWindow : undefined
+  const recent = prev ? logs.recent(50).find((entry) => entry.connectionFingerprint === connectionFingerprint(prev) && !entry.notSent && Date.now() - entry.ts < 30 * 60_000) : undefined
+  const nextModel = next ? recent ? resolveTargetModel(next, recent.accioModel) : next.model : undefined
+  const targetWindow = next ? usableModelInfo(next, nextModel)?.contextWindow : undefined
+  const currentWindow = recent?.contextWindow ?? (prev ? usableModelInfo(prev)?.contextWindow : undefined)
   const lines = [
     next ? `${next.name} · ${next.model}\n${new URL(next.baseUrl).origin}\n${fundingLabel(next)}` : tx('Accio official gateway and account billing', 'Accio 官方网关及账号计费'),
     tx('Future requests, including the conversation context and tool results Accio sends, go to this destination. In-flight requests continue with their original provider.', '后续请求（包括 Accio 发来的会话上下文和工具结果）将发送到此目标；正在进行的请求仍使用原供应商。'),
   ]
   if (next && !targetWindow) lines.push(tx('Target context window is unknown. Check long conversations before continuing.', '目标上下文窗口未知，请先核对长会话是否适用。'))
   if (targetWindow && currentWindow && targetWindow < currentWindow) lines.push(tx('This model has a smaller context window. Compact or start a new conversation in Accio if needed.', '此模型的上下文窗口更小；必要时请在 Accio 整理或新建会话。'))
+  if (targetWindow && recent?.estimatedInputTokens && recent.estimatedInputTokens >= targetWindow * 0.8) lines.push(tx(`The latest request's estimated input (${recent.estimatedInputTokens.toLocaleString()} tokens) is at least 80% of ${nextModel}'s window. This estimate is not a tokenizer count and may omit media. Compact or start a new conversation before continuing.`, `最近请求的估算输入（${recent.estimatedInputTokens.toLocaleString()} Token）已达到 ${nextModel} 窗口的 80%。这是估算，可能未计入图片等内容；继续前建议先整理或新建会话。`))
+  if (next?.parameterMode === 'auto') lines.push(tx('Model parameters follow the actual mapped model. Accio’s automatic-compaction threshold remains controlled by Accio.', '参数会跟随实际映射模型，自动压缩阈值仍由 Accio 管理。'))
   if (next && !connectionChecks.get(next).some((c) => c.scope === 'multiturn' && c.ok && !checkNeedsReview(c))) lines.push(tx('Tool round-trip compatibility has no passing check from the last 30 days. Review it before continuing a tool-heavy task.', '此连接没有最近 30 天内通过的工具多轮检测，继续工具密集任务前请复核。'))
   if (prev && next && fundingLabel(prev) !== fundingLabel(next)) lines.push(tx('Billing source changes. Any API charges or subscription overage follow the destination settings.', '计费来源将改变，API 费用或订阅额外用量按目标服务设置执行。'))
   const result = await dialog.showMessageBox(win!, { type: 'question', title: tx('Switch model connection?', '切换模型连接？'), message: tx('Use this connection for the next request', '下一条请求使用此连接'), detail: lines.join('\n\n'), buttons: [tx('Switch connection', '切换连接'), tr('取消')], defaultId: 1, cancelId: 1, noLink: true })

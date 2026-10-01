@@ -2,9 +2,18 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
 import type { CapabilityCheck, Provider, TestResult } from '../shared/types.ts'
+import { autoParameters, usableModelInfo } from '../shared/model-info.ts'
 
 export function connectionFingerprint(p: Provider): string {
+  if (p.parameterMode === 'auto') p = autoParameters(p) as Provider
   const { name: _name, note: _note, id: _id, createdAt: _created, pricing: _pricing, pricingModel: _pm, pricingUpdatedAt: _pt, modelInfo: _mi, fallbackEligible: _fallback, ...connection } = p
+  if (connection.parameterMode !== 'auto') { delete connection.parameterMode; delete connection.reasoningPreference }
+  else {
+    connection.reasoningPreference ??= 'auto'
+    // In auto mode metadata affects the request. Dates and prices alone do not.
+    const info = usableModelInfo(p)
+    Object.assign(connection, { automaticModelSettings: info ? { maxOutputTokens: info.maxOutputTokens, effortLevels: info.effortLevels, thinking: info.thinking, sampling: info.sampling, reasoningContent: info.reasoningContent, recommendedApi: info.recommendedApi } : null })
+  }
   if (connection.credentialId && connection.authMode?.endsWith('-oauth')) connection.apiKey = ''
   // Older records omit defaults which the editor writes explicitly. Both forms run
   // the same request and must share evidence, including a manual recheck in the UI.

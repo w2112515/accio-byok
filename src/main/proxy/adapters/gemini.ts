@@ -1,4 +1,5 @@
 import { tr } from '../../../shared/i18n.ts'
+import { autoEffort, usableModelInfo } from '../../../shared/model-info.ts'
 import type { ModelInfo, Provider } from '../../../shared/types.ts'
 import {
   UpstreamError,
@@ -102,7 +103,7 @@ const LEVELS = ['minimal', 'low', 'medium', 'high']
 export function buildGeminiBody(req: AccioRequest, ctx: Pick<AdapterContext, 'provider' | 'model'>): Record<string, unknown> {
   const { provider } = ctx
   const generationConfig: Record<string, unknown> = {
-    maxOutputTokens: resolveMaxTokens(req, provider, 16384),
+    maxOutputTokens: resolveMaxTokens(req, provider, 16384, ctx.model),
   }
   if (provider.sendSampling) {
     if (req.temperature !== undefined) generationConfig.temperature = req.temperature
@@ -111,15 +112,15 @@ export function buildGeminiBody(req: AccioRequest, ctx: Pick<AdapterContext, 'pr
   if (req.stopSequences.length) generationConfig.stopSequences = req.stopSequences.slice(0, 5)
   const thinkingConfig: Record<string, unknown> = { includeThoughts: true }
   if (provider.sendReasoningEffort) {
-    const level = req.thinkingLevel?.toLowerCase() ?? req.reasoningEffort?.toLowerCase()
+    const level = provider.parameterMode === 'auto' ? autoEffort(provider, ctx.model) : req.thinkingLevel?.toLowerCase() ?? req.reasoningEffort?.toLowerCase()
     if (level) {
       const mapped = LEVELS.includes(level) ? level : level === 'xhigh' || level === 'max' ? 'high' : undefined
       if (mapped) thinkingConfig.thinkingLevel = mapped
-    } else if (req.thinkingBudget !== undefined) {
+    } else if (provider.parameterMode !== 'auto' && req.thinkingBudget !== undefined) {
       thinkingConfig.thinkingBudget = req.thinkingBudget
     }
   }
-  generationConfig.thinkingConfig = thinkingConfig
+  if (provider.parameterMode !== 'auto' || (usableModelInfo(provider, ctx.model)?.thinking && usableModelInfo(provider, ctx.model)?.thinking !== 'off')) generationConfig.thinkingConfig = thinkingConfig
   const fmt = req.responseFormat?.trim().toLowerCase()
   if (fmt === 'json' || fmt === 'json_object' || fmt === 'application/json') generationConfig.responseMimeType = 'application/json'
 
@@ -225,7 +226,7 @@ async function describeModel(provider: Provider, fetch: FetchLike, signal?: Abor
   const response = await ensureOk(await fetch(sourceUrl, { headers: headers(provider), signal }), provider.name)
   const model = await response.json() as Record<string, unknown>
   if (typeof model.name !== 'string') return undefined
-  return { model: provider.model, contextWindow: positiveTokens(model.inputTokenLimit), windowKind: 'input', maxOutputTokens: positiveTokens(model.outputTokenLimit), source: 'api', sourceUrl, checkedAt: Date.now() }
+  return { model: provider.model, contextWindow: positiveTokens(model.inputTokenLimit), windowKind: 'input', maxOutputTokens: positiveTokens(model.outputTokenLimit), thinking: model.thinking === true ? (provider.model.includes('2.5') ? 'budget' : 'adaptive') : model.thinking === false ? 'off' : undefined, source: 'api', sourceUrl, checkedAt: Date.now() }
 }
 
 export const geminiAdapter: Adapter = { headers, stream, listModels, describeModel }

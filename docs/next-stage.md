@@ -1,5 +1,39 @@
 # Accio BYOK：实施结果与验收
 
+## 1.5.0: Automatic model settings / 自动模型配置
+
+2026-10-02. Version 1.5.0 is distributed as a [public preview](https://github.com/w2112515/accio-byok/releases/tag/v1.5.0), covering every existing connection preset: 18 visible provider/gateway presets now present 26 distinct API, subscription and OAuth entries; the three legacy custom presets remain compatible. New connections use Automatic settings. Existing configurations keep their manual behavior until the user explicitly chooses Automatic.
+
+新连接按“接入渠道 → Key / 授权 → 模型 → 自动配置”操作；协议和地址放入可展开的连接详情。API 与订阅渠道分别展示，获取 Key 的链接随渠道变化。推理提供模型默认、更快、更深入三个意图，只使用已确认支持的档位；未确认时沿用服务默认。高级参数仍可切换为自定义并逐项修改。
+
+### Coverage and behavior / 覆盖与行为
+
+| 接入范围 | 自动信息来源与边界 |
+| --- | --- |
+| Anthropic、OpenAI、Gemini | 模型接口提供的元数据优先，缺项使用已核对官方模型资料；Claude 动态读取思考模式与推理档位，Gemini 区分输入上限和输出上限。 |
+| DeepSeek、Moonshot / Kimi Code、GLM、MiniMax、百炼 | 通用模型接口加官方端点与准确模型 ID 的资料补全；订阅与 API 分开。Kimi `k3` 的窗口受套餐影响，未取得实际额度时保持未知。 |
+| 火山方舟、硅基流动、OpenRouter | 读取接口实际返回的窗口、输出、模态与推理信息；OpenRouter 使用其推理参数格式。不能从推理接入点 ID 或同名模型推测额度。 |
+| CPA、Sub2API、Grok2API、New API、通用中转及旧版自定义 | 保留所选协议，读取兼容接口提供的信息；未知字段保留未知，不套用同名官方模型上限。 |
+| Ollama、LM Studio | 读取运行中 / 已加载实例的上下文设置；未加载或多实例无法唯一匹配时，不把下载模型的标称上限当成可用窗口。 |
+
+- 接口资料在编辑器选择模型后自动读取，不发送生成请求，缓存五分钟；无接口资料时采用已核对的官方补全或显示未知，读取失败保留已有信息。手动窗口保留用户来源，自动读取与测试 / 保存互不覆盖。
+- 每次生成先解析 Accio 模型映射，再确定实际模型的参数。输出沿用 Accio 请求预算并限制在已知最大输出内，不因模型支持更大输出而自动放大预算；默认不转发可能与思考模式冲突的采样参数。未知映射模型不借用默认模型的资料。接口读取与手动填写的信息仅属于当前默认模型；映射模型使用自己的官方补全，缺项仍未知。
+- 默认推理意图采用服务默认值，不偷偷转发 Accio 的档位。更快 / 更深入选择该模型已确认的最低 / 最高非关闭档位；切换意图可能影响缓存与用量。ChatGPT 授权仍不设置输出 Token 上限。
+- 切换连接结合最近半小时内匹配连接的请求、实际映射模型及输入估算提示窗口风险。估算达到目标窗口 80% 时提示整理或新建会话；估算不是 tokenizer 计数，可能遗漏媒体。Accio 仍管理自己的自动压缩阈值；本版本不引入代理摘要、历史裁剪或原生压缩引擎改造。
+- 官方补全的来源 URL 与核对日期保存在模型信息中，按服务端点限定使用。覆盖所有接入方式不等于已验证每个上游模型、账号额度或真实付费兼容性。
+
+### Verification / 验证
+
+现有 48 项检查、类型检查通过。定向冒烟核对了官方模型的输出上限、实际模型映射、旧手动配置身份、推理意图、兼容接口元数据、Ollama 运行窗口、LM Studio 多实例歧义及 Gemini 2.5 参数边界；没有新增测试框架或自动化测试套件。保留原有前端包体积警告。
+
+隔离便携包已走通渠道选择、自动读取、文本 / 工具 / 图片 / 工具多轮检测、保存和真实本地代理请求。模型信息只读一次，没有额外生成请求；测试结果在自动读取结束后保留。默认模型日志记录 64K 窗口，映射到未知模型时不再带入该窗口，实际出站请求保留 9000 输出预算且不携带未确认的推理 / 采样参数。980×660 中英文自动配置和自定义界面已检查。
+
+最终便携包重启后重新读取加密 Key、自动模式、推理偏好和元数据；旧配置仍显示自定义并保留 777 Token 手动预算。最终实际默认模型请求将 9000 输出预算限制为 4096，深度意图转换为 `high`，不发送采样参数。安装器解出的 `app.asar` 与解包目录一致，包内六个构建文件与最终构建一致。安装版、便携版及 SHA-256 校验值在 `release/1.5.0`；本地模拟服务已结束。
+
+应用户要求，已执行 Windows 当前用户安装，安装器返回 0；系统登记版本 1.5.0，桌面与开始菜单快捷方式已生成。安装后的 `app.asar` 与已验证产物一致；安装前后原配置 SHA-256 一致，并在原数据目录的 `updates/` 内保留安装前副本。安装后实际启动确认版本、代理运行、加密可用及已有 Key 可读取，没有发起真实模型检测。这是当前用户安装验证，不等于从所有旧安装版本覆盖升级的验证。
+
+真实账号 OAuth、付费推理、套餐资格、供应商未提供的模型上限、旧安装版的覆盖升级仍待单独验收；模拟结果不代表这些项目已完成。没有操作实际 Accio 会话。
+
 ## 1.4.1: Connection and recovery clarity / 状态与恢复体验已打磨
 
 2026-10-01. The approved follow-up is implemented and verified locally, preserving the existing design. Current-connection evidence is isolated; capability checks older than 30 days prompt manual review; the latest completed snapshot captured with Accio closed is read from disk. Version 1.4.1 is distributed as a [public preview](https://github.com/w2112515/accio-byok/releases/tag/v1.4.1), with a Windows x64 installer, portable executable and SHA-256 checksums. Real-account acceptance stays pending.

@@ -22,7 +22,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { CATEGORY_LABELS, PRESETS, findPreset, type PresetCategory, type ProviderPreset } from '../../../shared/presets.ts'
 import { inferProviderKind, normalizeBaseUrl } from '../../../shared/provider-input.ts'
-import { knownModelInfo } from '../../../shared/model-info.ts'
+import { autoParameters, knownModelInfo, usableModelInfo } from '../../../shared/model-info.ts'
 import {
   OFFICIAL_PROVIDER_ID,
   type AccioModelInfo,
@@ -81,6 +81,8 @@ interface Draft {
   hasKey: boolean
   keyMasked: string
   model: string
+  parameterMode: 'auto' | 'custom'
+  reasoningPreference: 'auto' | 'fast' | 'deep'
   overrides: { from: string; to: string }[]
   maxOutputTokens: string
   sendReasoningEffort: boolean
@@ -110,6 +112,11 @@ const num = (s: string) => {
   return n
 }
 
+function urlErrorFor(draft: Draft): string | undefined {
+  try { normalizeBaseUrl(draft.kind, draft.baseUrl) } catch (e) { return (e as Error).message }
+  return undefined
+}
+
 function fromPreset(p: ProviderPreset): Draft {
   const d = p.defaults
   return {
@@ -124,6 +131,7 @@ function fromPreset(p: ProviderPreset): Draft {
     hasKey: false,
     keyMasked: '',
     model: d.model ?? '',
+    parameterMode: 'auto', reasoningPreference: 'auto',
     overrides: [],
     maxOutputTokens: d.maxOutputTokens ? String(d.maxOutputTokens) : '',
     sendReasoningEffort: d.sendReasoningEffort ?? false,
@@ -140,7 +148,7 @@ function fromPreset(p: ProviderPreset): Draft {
     pricingModel: d.model ?? '',
     pricingUpdatedAt: d.pricing ? knownModelInfo(p.kind, p.baseUrl, d.model ?? '')?.checkedAt : undefined,
     modelInfo: knownModelInfo(p.kind, p.baseUrl, d.model ?? ''),
-    authMode: p.category === 'local' ? 'none' : 'api-key', subscriptionAcknowledged: false, fallbackEligible: false,
+    authMode: d.authMode ?? (p.category === 'local' ? 'none' : 'api-key'), subscriptionAcknowledged: false, fallbackEligible: false,
   }
 }
 
@@ -158,6 +166,7 @@ function fromView(v: ProviderView): Draft {
     hasKey: v.hasApiKey,
     keyMasked: v.apiKeyMasked,
     model: v.model,
+    parameterMode: v.parameterMode ?? 'custom', reasoningPreference: v.reasoningPreference ?? 'auto',
     overrides: Object.entries(v.modelOverrides ?? {}).map(([from, to]) => ({ from, to })),
     maxOutputTokens: v.maxOutputTokens ? String(v.maxOutputTokens) : '',
     sendReasoningEffort: v.sendReasoningEffort ?? false,
@@ -199,6 +208,7 @@ function toInput(d: Draft): ProviderInput {
     baseUrl: d.baseUrl,
     apiKey: d.keyTouched ? d.apiKey : undefined,
     model: d.model,
+    parameterMode: d.parameterMode, reasoningPreference: d.reasoningPreference,
     authMode: d.authMode, credentialId: d.credentialId, subscriptionAcknowledged: d.subscriptionAcknowledged, fallbackEligible: d.fallbackEligible,
     modelOverrides: Object.fromEntries(d.overrides.filter((o) => o.from && o.to).map((o) => [o.from, o.to])),
     maxOutputTokens: num(d.maxOutputTokens),
@@ -219,12 +229,22 @@ function toInput(d: Draft): ProviderInput {
 // ---------------------------------------------------------------------------
 // Preset gallery
 
+function channelPresets(): ProviderPreset[] {
+  return PRESETS.flatMap((p) => {
+    if (p.hidden || ['relay', 'local', 'custom'].includes(p.category)) return [p]
+    const channels = [{ ...p, name: `${p.name} · API` }]
+    for (const route of SUBSCRIPTION_ROUTES[p.id] ?? []) channels.push({ ...p, name: route.name, baseUrl: route.baseUrl, keyUrl: route.usageUrl, docsUrl: route.docsUrl, description: tx('Subscription key · dedicated plan endpoint', '订阅专用 Key · 套餐服务地址'), modelHints: route.model ? [route.model] : [], defaults: { ...p.defaults, authMode: 'subscription-key', openaiApi: 'chat', model: route.model, pricing: undefined } })
+    if (p.id === 'openai' || p.id === 'openrouter') channels.push({ ...p, name: p.id === 'openai' ? 'ChatGPT · OAuth' : 'OpenRouter · OAuth', description: p.id === 'openai' ? tx('Sign in with ChatGPT · use an eligible plan', '使用 ChatGPT 登录 · 符合条件的套餐') : tx('Sign in with OpenRouter · API billing', '使用 OpenRouter 登录 · API 计费'), defaults: { ...p.defaults, authMode: p.id === 'openai' ? 'openai-oauth' : 'openrouter-oauth' } })
+    return channels
+  })
+}
+
 function PresetGallery({ onPick }: { onPick: (p: ProviderPreset) => void }) {
   const [q, setQ] = useState('')
   const language = getLanguage()
   const groups = useMemo(() => {
     const k = q.trim().toLowerCase()
-    const list = PRESETS.filter((p) => !p.hidden && (!k || `${p.name} ${p.description} ${p.baseUrl}`.toLowerCase().includes(k)))
+    const list = channelPresets().filter((p) => !p.hidden && (!k || `${p.name} ${p.description} ${p.baseUrl}`.toLowerCase().includes(k)))
     return (Object.keys(CATEGORY_LABELS) as PresetCategory[]).map((c) => ({ c, items: list.filter((p) => p.category === c) })).filter((g) => g.items.length)
   }, [q, language])
   return (
@@ -240,7 +260,7 @@ function PresetGallery({ onPick }: { onPick: (p: ProviderPreset) => void }) {
             <div className="grid grid-cols-2 gap-2.5">
               {items.map((p) => (
                 <button
-                  key={p.id}
+                  key={`${p.id}:${p.baseUrl}:${p.defaults.authMode ?? 'api-key'}`}
                   onClick={() => onPick(p)}
                   className="group flex items-start gap-3 rounded-xl border border-border bg-surface p-3 text-left transition hover:-translate-y-px hover:border-accent/40 hover:shadow-card"
                 >
@@ -271,7 +291,7 @@ function ModelPicker({ draft, value, onChange, id, placeholder }: { draft: Draft
   const [loading, setLoading] = useState(false)
   const [filter, setFilter] = useState('')
   const hints = findPreset(draft.presetId)?.modelHints ?? []
-  const connection = JSON.stringify([draft.id, draft.kind, draft.openaiApi, draft.baseUrl, draft.apiKey, draft.keyTouched, draft.headersText, draft.allowInsecureHttp])
+  const connection = JSON.stringify([draft.id, draft.kind, draft.openaiApi, draft.baseUrl, draft.apiKey, draft.keyTouched, draft.headersText, draft.allowInsecureHttp, draft.authMode, draft.credentialId, draft.subscriptionAcknowledged])
   const latest = useRef(connection)
   latest.current = connection
   const request = useRef(0)
@@ -397,6 +417,7 @@ function ProviderEditor({ open, onOpenChange, initial, focusChecks = false }: { 
   const [readingInfo, setReadingInfo] = useState(false)
   const [infoMessage, setInfoMessage] = useState<string>()
   const infoOperation = useRef(0)
+  const metadataAttempt = useRef('')
   const [draft, setDraft] = useState<Draft | null>(null)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
@@ -414,6 +435,7 @@ function ProviderEditor({ open, onOpenChange, initial, focusChecks = false }: { 
   useEffect(() => {
     operation.current++
     infoOperation.current++
+    metadataAttempt.current = ''
     setReadingInfo(false)
     setInfoMessage(undefined)
     setTesting(false)
@@ -455,6 +477,7 @@ function ProviderEditor({ open, onOpenChange, initial, focusChecks = false }: { 
   const lockedEndpoint = isOAuth || draft?.authMode === 'subscription-key'
   const registration = state?.authorizations?.find((a) => a.id === draft?.credentialId)
   const subscription = draft ? subscriptionRoute(draft) : undefined
+  const keyUrl = draft?.authMode === 'subscription-key' ? subscription?.usageUrl : preset?.keyUrl
   const changeAuth = (mode: AuthMode) => {
     if (!draft || !preset) return
     const route = SUBSCRIPTION_ROUTES[preset.id]?.[0]
@@ -473,9 +496,16 @@ function ProviderEditor({ open, onOpenChange, initial, focusChecks = false }: { 
     } catch (e) { setFormError((e as Error).message) }
     finally { setSigningIn(false) }
   }
-  const modelInfo = draft ? draft.modelInfo?.model === draft.model.trim() ? draft.modelInfo : knownModelInfo(draft.kind, draft.baseUrl, draft.model.trim()) : undefined
-  const readInfo = async () => {
+  const modelInfo = draft ? usableModelInfo(draft, draft.model.trim()) : undefined
+  const recommended = draft && !urlErrorFor(draft) ? autoParameters({ kind: draft.kind, baseUrl: draft.baseUrl, model: draft.model.trim(), modelInfo: draft.modelInfo, authMode: draft.authMode, parameterMode: 'auto' }) : undefined
+  const useParameterMode = (mode: 'auto' | 'custom') => {
     if (!draft) return
+    if (mode === 'custom' && draft.parameterMode === 'auto' && recommended) setDraft({ ...draft, parameterMode: mode, sendReasoningEffort: recommended.sendReasoningEffort ?? false, sendReasoningContent: recommended.sendReasoningContent ?? false, thinking: recommended.thinking ?? 'off', thinkingBudget: String(recommended.thinkingBudget ?? 8000), promptCaching: recommended.promptCaching ?? false, sendSampling: recommended.sendSampling ?? false, openaiApi: recommended.openaiApi ?? draft.openaiApi, maxOutputTokens: '' })
+    else set('parameterMode', mode)
+  }
+  const readInfo = async () => {
+    if (!draft || testing || saving || signingIn) return
+    metadataAttempt.current = metadataIdentity
     const currentDraft = draft
     const version = ++infoOperation.current
     setReadingInfo(true)
@@ -484,7 +514,7 @@ function ProviderEditor({ open, onOpenChange, initial, focusChecks = false }: { 
       const info = await api.providerModelInfo(toInput(draft))
       if (version !== infoOperation.current || latestDraft.current !== currentDraft) return
       if (info) { setDraft({ ...draft, modelInfo: info }); setInfoMessage(tr("已读取接口提供的信息；这不代表能力已经实测。")) }
-      else setInfoMessage(tr("该接口未提供可用的模型元数据，可依据供应商文档手动填写。"))
+      else setInfoMessage(knownModelInfo(draft.kind, draft.baseUrl, draft.model.trim()) ? tx('No additional API metadata; using verified official references.', '接口未提供补充信息，已采用核对过的官方资料。') : tr("该接口未提供可用的模型元数据，可依据供应商文档手动填写。"))
     } catch (e) {
       if (version === infoOperation.current && latestDraft.current === currentDraft) setInfoMessage(tr("读取失败：{0}。已填写的信息保留。", (e as Error).message))
     } finally { if (version === infoOperation.current) setReadingInfo(false) }
@@ -493,6 +523,21 @@ function ProviderEditor({ open, onOpenChange, initial, focusChecks = false }: { 
     if (!draft) return
     setDraft({ ...draft, modelInfo: { ...modelInfo, model: draft.model.trim(), contextWindow: value ? Number(value) : undefined, windowKind: 'context', source: 'user', sourceUrl: undefined, checkedAt: Date.now() } })
   }
+  const metadataIdentity = draft ? JSON.stringify([draft.id, draft.kind, draft.baseUrl, draft.apiKey, draft.keyTouched, draft.credentialId, draft.headersText, draft.authMode, draft.subscriptionAcknowledged, draft.model.trim(), draft.parameterMode]) : ''
+  useEffect(() => {
+    infoOperation.current++
+    setReadingInfo(false)
+    setInfoMessage(undefined)
+  }, [metadataIdentity])
+  useEffect(() => {
+    if (testing || saving || signingIn || metadataAttempt.current === metadataIdentity) return
+    if (!open || step !== 'form' || !draft || draft.parameterMode !== 'auto' || !draft.model.trim() || (draft.modelInfo?.model === draft.model.trim() && draft.modelInfo.source === 'user') || urlErrorFor(draft)) return
+    if (draft.modelInfo?.model === draft.model.trim() && draft.modelInfo.source === 'api' && Date.now() - draft.modelInfo.checkedAt < 5 * 60_000) return
+    if (draft.authMode === 'subscription-key' && !draft.subscriptionAcknowledged) return
+    if (draft.authMode.endsWith('-oauth') ? !draft.credentialId : draft.authMode !== 'none' && !(draft.apiKey || (!draft.keyTouched && draft.hasKey))) return
+    const timer = setTimeout(() => void readInfo(), 800)
+    return () => clearTimeout(timer)
+  }, [metadataIdentity, open, step, testing, saving, signingIn])
   const isNew = (initial === 'new' || initial === null) && !draft?.id
   let urlError: string | undefined
   if (draft) {
@@ -510,7 +555,8 @@ function ProviderEditor({ open, onOpenChange, initial, focusChecks = false }: { 
   }
 
   const save = async () => {
-    if (!draft || urlError || !draft.model.trim()) return
+    if (!draft || readingInfo || urlError || !draft.model.trim()) return
+    metadataAttempt.current = metadataIdentity
     setSaving(true)
     try {
       const saved = await api.saveProvider(toInput(draft))
@@ -527,7 +573,8 @@ function ProviderEditor({ open, onOpenChange, initial, focusChecks = false }: { 
   }
 
   const runTest = async (activate = false, scope: TestScope = 'text') => {
-    if (!draft) return
+    if (!draft || readingInfo) return
+    metadataAttempt.current = metadataIdentity
     const version = ++operation.current
     const current = () => operation.current === version && latestDraft.current === draft
     setTesting(true)
@@ -570,7 +617,7 @@ function ProviderEditor({ open, onOpenChange, initial, focusChecks = false }: { 
                 <ArrowLeft />
               </Button>
             ) : null}
-            {isNew ? tr("添加 {0}", preset?.category === 'custom' ? tr("自定义供应商") : (preset?.name ?? '')) : tr("编辑 {0}", draft?.name ?? '')}
+            {isNew ? tr("添加 {0}", preset?.category === 'custom' ? tr("自定义供应商") : (draft?.name ?? preset?.name ?? '')) : tr("编辑 {0}", draft?.name ?? '')}
           </span>
         )
       }
@@ -584,12 +631,12 @@ function ProviderEditor({ open, onOpenChange, initial, focusChecks = false }: { 
               {testing ? tr("正在测试提交时的配置…修改配置后，本次结果不再适用。") : <>{test?.scope ? `${{ text: tr("短文本"), tools: tr("工具调用"), image: tr("图片识别"), multiturn: tx('Tool round trip', '工具多轮续接') }[test.scope]} · ` : ''}{test?.checkedAt ? `${fmtDateTime(test.checkedAt)} · ` : ''}{test?.ok ? tr("通过 · {0} · {1}", fmtMs(test.latencyMs), test.message) : test?.message}</>}
             </div> : null}
             <div className="flex justify-end gap-2">
-            <Button onClick={() => void runTest()} disabled={signingIn || saving || testing || !!urlError || !draft.model.trim()}>
+            <Button onClick={() => void runTest()} disabled={readingInfo || signingIn || saving || testing || !!urlError || !draft.model.trim()}>
               <Wifi />
               {tr("测试")}</Button>
-            <Button onClick={save} disabled={signingIn || saving || testing || !!urlError || !draft.model.trim()}>
+            <Button onClick={save} disabled={readingInfo || signingIn || saving || testing || !!urlError || !draft.model.trim()}>
               {tr("仅保存")}</Button>
-            <Button variant="primary" onClick={() => void runTest(true)} loading={saving || testing} disabled={signingIn || !!urlError || !draft.model.trim()}>
+            <Button variant="primary" onClick={() => void runTest(true)} loading={saving || testing} disabled={readingInfo || signingIn || !!urlError || !draft.model.trim()}>
               {tr("测试并启用")}</Button>
             </div>
           </div>
@@ -611,12 +658,12 @@ function ProviderEditor({ open, onOpenChange, initial, focusChecks = false }: { 
         />
       ) : draft ? (
         <fieldset disabled={saving} className="min-w-0 space-y-5">
-          <Field label={tx('Authentication', '认证方式')}>
-            <SelectBox label={tx('Authentication', '认证方式')} value={draft.authMode} disabled={signingIn} onChange={(v) => changeAuth(v as AuthMode)} options={[
-              { value: 'api-key', label: 'API Key' },
+          <Field label={tx('Access channel', '接入渠道')}>
+            <SelectBox label={tx('Access channel', '接入渠道')} value={draft.authMode} disabled={signingIn} onChange={(v) => changeAuth(v as AuthMode)} options={[
+              { value: 'api-key', label: `${preset?.name ?? 'API'} · API Key` },
               ...(preset?.id === 'openai' ? [{ value: 'openai-oauth', label: 'ChatGPT · OAuth' }] : []),
               ...(preset?.id === 'openrouter' ? [{ value: 'openrouter-oauth', label: 'OpenRouter · OAuth' }] : []),
-              ...(SUBSCRIPTION_ROUTES[preset?.id ?? ''] ? [{ value: 'subscription-key', label: tx('Subscription key', '订阅专用 Key') }] : []),
+              ...(SUBSCRIPTION_ROUTES[preset?.id ?? ''] ? [{ value: 'subscription-key', label: `${subscription?.name ?? SUBSCRIPTION_ROUTES[preset!.id][0].name} · ${tx('Subscription', '订阅')}` }] : []),
               ...(preset?.category === 'local' ? [{ value: 'none', label: tx('No key · Local model', '无 Key · 本地模型') }] : []),
             ]} />
           </Field>
@@ -644,6 +691,7 @@ function ProviderEditor({ open, onOpenChange, initial, focusChecks = false }: { 
             <Field label={tr("名称")} htmlFor="pv-name">
               <Input id="pv-name" value={draft.name} onChange={(e) => set('name', e.target.value)} placeholder={preset?.name ?? tr("给它起个名字")} />
             </Field>
+          <Section title={tx('Connection details', '连接详情')} description={`${draft.kind === 'openai' ? (draft.parameterMode === 'auto' ? recommended?.openaiApi ?? draft.openaiApi : draft.openaiApi) === 'responses' ? 'Responses' : 'Chat Completions' : KIND_LABEL[draft.kind]} · ${draft.baseUrl || tx('Enter endpoint', '填写接口地址')}`} defaultOpen={preset?.category === 'relay' || preset?.category === 'custom'}>
           <fieldset disabled={lockedEndpoint || signingIn} className="min-w-0 space-y-5">
           <div>
             <Field label={tr("接口类型")}>
@@ -657,7 +705,7 @@ function ProviderEditor({ open, onOpenChange, initial, focusChecks = false }: { 
             </Field>
           </div>
           {draft.kind === 'openai' ? <Field label={tr("OpenAI 接口协议")} hint={lockedEndpoint ? tx('This connection uses the provider’s official protocol and destination.', '此连接使用供应商的官方协议与地址。') : tr("Codex 类分组通常使用 Responses；以网关提供的接入说明为准。")}>
-            <Segmented label={tr("OpenAI 接口协议")} value={draft.openaiApi} onChange={(v) => set('openaiApi', v)} options={[{ value: 'chat', label: 'Chat Completions' }, { value: 'responses', label: 'Responses' }]} />
+            <fieldset disabled={draft.parameterMode === 'auto' && !!modelInfo?.recommendedApi}><Segmented label={tr("OpenAI 接口协议")} value={draft.parameterMode === 'auto' ? recommended?.openaiApi ?? draft.openaiApi : draft.openaiApi} onChange={(v) => set('openaiApi', v)} options={[{ value: 'chat', label: 'Chat Completions' }, { value: 'responses', label: 'Responses' }]} /></fieldset>
           </Field> : null}
           <Field
             label={tr("接口地址")}
@@ -672,12 +720,13 @@ function ProviderEditor({ open, onOpenChange, initial, focusChecks = false }: { 
             {preset.docsUrl ? <button type="button" className="mt-1 inline-flex items-center gap-1 text-accent hover:underline" onClick={() => void api.openExternal(preset.docsUrl!)}>{tr("项目接入说明 ")}<ExternalLink className="size-3" /></button> : null}
           </div> : null}
           </fieldset>
+          </Section>
           {!isOAuth && draft.authMode !== 'none' ? <Field
             label={
               <span className="flex items-center justify-between">
                 {draft.authMode === 'subscription-key' ? tx('Subscription key', '订阅专用 Key') : 'API Key'}
-                {preset?.keyUrl ? (
-                  <button type="button" onClick={() => void api.openExternal(preset.keyUrl!)} className="inline-flex items-center gap-1 text-[12px] font-normal text-accent hover:underline">
+                {keyUrl ? (
+                  <button type="button" onClick={() => void api.openExternal(keyUrl)} className="inline-flex items-center gap-1 text-[12px] font-normal text-accent hover:underline">
                     {tr("获取 Key ")}<ExternalLink className="size-3" />
                   </button>
                 ) : null}
@@ -696,29 +745,39 @@ function ProviderEditor({ open, onOpenChange, initial, focusChecks = false }: { 
           <Field label={tr("默认模型")} htmlFor="pv-model" hint={tr("Accio 里选择的任何模型都会被替换成它，除非在下方单独映射。")}>
             <ModelPicker id="pv-model" draft={draft} value={draft.model} onChange={(v) => set('model', v)} />
           </Field>
+          <div className="space-y-3 rounded-xl border border-accent/25 bg-accent-soft/40 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-[13px] font-medium">{tx('Model settings', '模型设置')}</p><Segmented label={tx('Parameter mode', '参数模式')} value={draft.parameterMode} onChange={useParameterMode} options={[{ value: 'auto', label: tx('Automatic · recommended', '自动 · 推荐') }, { value: 'custom', label: tx('Custom', '自定义') }]} /></div>
+            {draft.parameterMode === 'auto' ? <>
+              <p className="text-[12px] leading-relaxed text-muted">{tx('Output follows Accio and is capped at the known model limit. Optional parameters follow the selected model. API metadata is read automatically after selection; no generation request is sent.', '输出沿用 Accio，并限制在已知模型上限内；可选参数随实际模型调整。选定模型后自动读取接口资料，不发送生成请求。')}</p>
+              {modelInfo?.effortLevels?.length ? <Field label={tx('Reasoning preference', '推理偏好')}><Segmented label={tx('Reasoning preference', '推理偏好')} value={draft.reasoningPreference} onChange={(v) => set('reasoningPreference', v)} options={[{ value: 'auto', label: tx('Model default', '模型默认') }, { value: 'fast', label: tx('Faster', '更快') }, { value: 'deep', label: tx('Deeper', '更深入') }]} /><p className="mt-1 text-[11px] text-subtle">{tx('Deeper reasoning can increase tokens and latency. Changing effort may invalidate cached prefixes.', '更深入可能增加 Token 消耗和等待时间；切换推理档位可能影响缓存命中。')}</p></Field> : <p className="text-[12px] text-subtle">{tx('Reasoning uses the service default; adjustable levels have not been confirmed for this model.', '推理沿用服务默认值；当前模型尚未确认支持可调档位。')}</p>}
+              {!modelInfo?.contextWindow ? <p className="text-[12px] text-warning">{tx('Window unknown. This endpoint has not supplied a verified limit; set it from provider documentation if needed.', '窗口未知：当前端点尚未提供可核实上限，可依据供应商文档补填。')}</p> : null}
+            </> : <p className="text-[12px] leading-relaxed text-muted">{tx('Your existing settings are preserved. Edit advanced parameters below or choose Automatic to apply model recommendations.', '保留现有设置；可在下方修改高级参数，或切换到“自动”应用模型推荐配置。')}</p>}
+            {readingInfo ? <p role="status" className="flex items-center gap-1 text-[12px] text-muted"><Loader2 className="size-3 animate-spin" />{tx('Reading model information…', '正在读取模型信息…')}</p> : infoMessage ? <p role="status" className="text-[12px] text-muted">{infoMessage}</p> : null}
+          </div>
           <div className="rounded-lg border border-border bg-fg/[0.025] px-3 py-2.5 text-[12px] leading-relaxed text-muted">
             <p>{modelInfo?.windowKind === 'input' ? tr("输入上限") : tr("上下文窗口")}：{modelInfo?.contextWindow ? `${fmtTokens(modelInfo.contextWindow)} Token` : tr("未知")} {tr(" · 最大输出：")}{modelInfo?.maxOutputTokens ? `${fmtTokens(modelInfo.maxOutputTokens)} Token` : tr("未知")}</p>
             <p>{tr("工具：")}{modelInfo?.tools === undefined ? tr("未确认") : modelInfo.tools ? tr("资料支持") : tr("资料不支持")} {tr(" · 图像：")}{modelInfo?.vision === undefined ? tr("未确认") : modelInfo.vision ? tr("资料支持") : tr("资料不支持")}</p>
             {modelInfo ? <p className="mt-1 text-subtle">{tr("来源：")}{{ official: tr("官方资料"), api: tr("供应商接口"), user: tr("手动填写") }[modelInfo.source]} · {fmtDateTime(modelInfo.checkedAt)}{modelInfo.sourceUrl ? <button type="button" className="ml-2 text-accent hover:underline" onClick={() => void api.openExternal(modelInfo.sourceUrl!)}>{tr("查看来源")}</button> : null}</p> : <p className="mt-1 text-subtle">{tr("短文本通过不代表工具和图像可用；可展开下方模型信息核对。")}</p>}
           </div>
+          <p className="text-[12px] leading-relaxed text-subtle">{tx('Long conversations: Accio controls automatic compaction. These limits inform warnings and output settings; they do not change Accio’s compaction threshold. Before switching to a smaller window, compact in Accio or start a new conversation.', '长会话保护：自动压缩由 Accio 控制。这里的窗口用于提示和输出设置，不会修改 Accio 的压缩阈值；换到较小窗口前，请先在 Accio 整理或新建会话。')}</p>
           <p className="text-[12px] leading-relaxed text-subtle">{tx('Checks send synthetic prompts and may consume paid usage or subscription quota. Tool round trips send up to two requests. Checks are excluded from Accio usage totals. ChatGPT plan requests cannot set an output-token limit.', '检测会发送合成提示词，可能消耗费用或套餐额度。工具多轮检测最多发送两次请求，检测用量不计入 Accio 汇总。ChatGPT 套餐请求不支持设置输出 Token 上限。')}</p>
           {initial && initial !== 'new' && initial.keyError && !draft.keyTouched ? <p role="alert" className="text-[12.5px] text-danger">{initial.keyError}</p> : null}
           <div ref={checksSection}><Section title={tr("可选能力检测")} description={tr("需要工具或图片功能时分别检查；不会自动调用")} defaultOpen={focusChecks}>
             <p className="text-[12px] leading-relaxed text-subtle">{tx('Tool checks return fixed arguments without executing real tools. Image checks use a built-in red square. Results apply to the tested configuration.', '工具检测仅返回固定参数，不执行真实工具；图片检测使用内置红色方块，结果只适用于被检测的配置。')}</p>
-            <div className="flex flex-wrap gap-2"><Button size="sm" disabled={saving || testing || !!urlError || !draft.model.trim()} onClick={() => void runTest(false, 'tools')}>{tr("检测工具调用")}</Button><Button size="sm" disabled={saving || testing || !!urlError || !draft.model.trim()} onClick={() => void runTest(false, 'image')}>{tr("检测图片识别")}</Button><Button size="sm" disabled={saving || testing || !!urlError || !draft.model.trim()} onClick={() => void runTest(false, 'multiturn')}>{tx('Check tool round trip', '检测工具多轮续接')}</Button></div>
+            <div className="flex flex-wrap gap-2"><Button size="sm" disabled={readingInfo || signingIn || saving || testing || !!urlError || !draft.model.trim()} onClick={() => void runTest(false, 'tools')}>{tr("检测工具调用")}</Button><Button size="sm" disabled={readingInfo || signingIn || saving || testing || !!urlError || !draft.model.trim()} onClick={() => void runTest(false, 'image')}>{tr("检测图片识别")}</Button><Button size="sm" disabled={readingInfo || signingIn || saving || testing || !!urlError || !draft.model.trim()} onClick={() => void runTest(false, 'multiturn')}>{tx('Check tool round trip', '检测工具多轮续接')}</Button></div>
             {savedChecks?.length ? <div className="space-y-1 text-[12px] text-muted"><p>{tx('Saved connection evidence; edits require new checks. Checks older than 30 days are flagged for review, without automatic requests.', '已保存连接的验证记录；更改配置后需要重新检测。超过 30 天会提示复核，不自动发送请求。')}</p>{savedChecks.map((c) => <p key={c.scope} className={c.ok && checkNeedsReview(c) ? 'text-warning' : undefined}>{checkScopeLabel(c.scope)} · {c.ok ? checkNeedsReview(c) ? tx('Previously passed · review recommended', '曾通过 · 建议复核') : tx('Passed', '通过') : tx('Failed', '失败')} · {fmtDateTime(c.checkedAt)}</p>)}</div> : null}
           </Section></div>
 
           <ToggleRow label={tx('Offer as a fallback', '加入备用连接列表')} hint={tx('Available for manual switching after a failure. No automatic retry or paid fallback.', '失败后可手动切换到此连接；不会自动重试或转入付费通道。')} checked={draft.fallbackEligible} onChange={(v) => set('fallbackEligible', v)} />
 
           <Section title={tr("模型信息与窗口")} description={tr("读取供应商元数据，或依据文档填写；只适用于当前默认模型")}>
-            <div className="flex flex-wrap items-center gap-3"><Button type="button" size="sm" loading={readingInfo} disabled={!draft.model.trim() || !!urlError} onClick={() => void readInfo()}>{tr("读取模型信息")}</Button><span className="text-[12px] text-subtle">{tr("读取元数据，不发送生成请求；缓存 5 分钟。")}</span></div>
+            <div className="flex flex-wrap items-center gap-3"><Button type="button" size="sm" loading={readingInfo} disabled={testing || saving || signingIn || !draft.model.trim() || !!urlError} onClick={() => void readInfo()}>{tr("读取模型信息")}</Button><span className="text-[12px] text-subtle">{tr("读取元数据，不发送生成请求；缓存 5 分钟。")}</span></div>
             {infoMessage ? <p role="status" className="text-[12px] leading-relaxed text-muted">{infoMessage}</p> : null}
             <Field label={tr("上下文窗口 Token")} htmlFor="pv-context" hint={tr("手动填写会标记为用户提供。未知可留空；它不会改变 Accio 的自动压缩阈值。")}>
               <Input id="pv-context" value={modelInfo?.contextWindow ?? ''} onChange={(e) => setWindow(e.target.value.replace(/[^\d]/g, ''))} placeholder={tr("未知")} className="w-48 tabular" />
             </Field>
-            {modelInfo?.maxOutputTokens ? <Button size="sm" onClick={() => set('maxOutputTokens', String(Math.min(Number(draft.maxOutputTokens) || 16384, modelInfo.maxOutputTokens!)))}>{tr("按已知输出上限调整")}</Button> : null}
-            {modelInfo?.thinking && draft.kind === 'anthropic' ? <Button size="sm" onClick={() => set('thinking', modelInfo.thinking!)}>{tr("采用资料建议的思考模式")}</Button> : null}
+            {draft.parameterMode === 'custom' && modelInfo?.maxOutputTokens ? <Button size="sm" onClick={() => set('maxOutputTokens', String(Math.min(Number(draft.maxOutputTokens) || 16384, modelInfo.maxOutputTokens!)))}>{tr("按已知输出上限调整")}</Button> : null}
+            {draft.parameterMode === 'custom' && modelInfo?.thinking && draft.kind === 'anthropic' ? <Button size="sm" onClick={() => set('thinking', modelInfo.thinking!)}>{tr("采用资料建议的思考模式")}</Button> : null}
             <p className="text-[12px] leading-relaxed text-subtle">{tr("每条模型映射可能指向不同的模型，不能共用这里的窗口。切换到较小窗口前，应先在 Accio 中整理会话或新建会话。")}</p>
           </Section>
 
@@ -749,9 +808,11 @@ function ProviderEditor({ open, onOpenChange, initial, focusChecks = false }: { 
           </Section>
 
           <Section title={tr("高级参数")} description={tr("输出长度、思考、缓存、采样和自定义请求头")}>
+            {draft.parameterMode === 'auto' ? <div className="space-y-2 text-[12px] text-muted"><p>{tx('Output, reasoning, history and sampling are managed automatically for each target model. Switch to Custom to override them.', '输出、推理、思考历史与采样随目标模型自动管理。切换自定义后可手动覆盖。')}</p><Button size="sm" onClick={() => useParameterMode('custom')}>{tx('Customize recommended settings', '以推荐配置为基础自定义')}</Button></div> : null}
             <p className="text-[12px] leading-relaxed text-muted">{tr("连接保护：相同地址与凭据最多 4 个并发请求；HTTP 429 后按 Retry-After 等待（缺失时 60 秒）。不会自动重试、切换账户或跟随接口重定向。这些措施不能保证账号不受限。")}</p>
             {/^http:\/\//i.test(draft.baseUrl) ? <ToggleRow label={tr("允许远程 HTTP")} hint={tr("仅在你了解风险时开启：本机以外的 HTTP 会明文传输 Key 和会话。优先使用 HTTPS。本机服务不需要开启。")} checked={draft.allowInsecureHttp} onChange={(v) => set('allowInsecureHttp', v)} /> : null}
             <p className="text-[12px] leading-relaxed text-subtle">{tr("自动压缩由 Accio 管理，依据它所选模型的上下文窗口。BYOK 热切换不会同步该阈值；目标模型窗口较小时，建议先压缩或新建会话。提示缓存节省重复输入成本，不会扩大上下文窗口。")}</p>
+            {draft.parameterMode === 'custom' ? <>
             <Field label={tr("最大输出 Token")} htmlFor="pv-max" hint={draft.authMode === 'openai-oauth' ? tx('Not supported by ChatGPT plan requests; this value is omitted.', 'ChatGPT 套餐请求不支持此参数，不会发送。') : tr("留空则沿用 Accio 的请求值（通常 16384）。部分模型上限较低，如 8192。")}>
               <Input id="pv-max" disabled={draft.authMode === 'openai-oauth'} value={draft.maxOutputTokens} onChange={(e) => set('maxOutputTokens', e.target.value.replace(/[^\d]/g, ''))} placeholder={tr("沿用 Accio")} className="w-48 tabular" />
             </Field>
@@ -782,6 +843,7 @@ function ProviderEditor({ open, onOpenChange, initial, focusChecks = false }: { 
               </>
             ) : null}
             {draft.authMode !== 'openai-oauth' ? <ToggleRow label={tr("转发采样参数")} hint={tr("转发 temperature / top_p。较新的 Claude 和推理模型会拒绝这些参数。")} checked={draft.sendSampling} onChange={(v) => set('sendSampling', v)} /> : null}
+            </> : null}
             <Field label={tr("自定义请求头")} htmlFor="pv-headers" hint={tr("每行一个，格式为「名称: 值」。保存时随 Key 加密；此编辑区会显示原值。禁止 Cookie 和传输控制头。")}>
               <Textarea id="pv-headers" disabled={lockedEndpoint} value={draft.headersText} onChange={(e) => set('headersText', e.target.value)} placeholder="X-Custom-Header: value" className="font-mono text-[12.5px]" rows={3} spellCheck={false} />
             </Field>
@@ -1105,7 +1167,7 @@ export function ProvidersPage() {
         >
           <Plus className="size-6" />
           <span className="text-[13px] font-medium">{tr("添加供应商")}</span>
-          <span className="text-[12px] text-subtle">{tr("{0} 个预设 · 支持任意兼容接口", PRESETS.filter((p) => !p.hidden).length)}</span>
+          <span className="text-[12px] text-subtle">{tr("{0} 个预设 · 支持任意兼容接口", channelPresets().filter((p) => !p.hidden).length)}</span>
         </button>
       </div>
       <ProviderEditor open={open} onOpenChange={(value) => { setOpen(value); if (!value) setReviewChecks(false) }} initial={editing} focusChecks={reviewChecks} />

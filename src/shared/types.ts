@@ -41,6 +41,11 @@ export interface ModelInfo {
   tools?: boolean
   vision?: boolean
   thinking?: ThinkingMode
+  /** Verified wire values, in increasing reasoning depth. Empty means no confirmed adjustable levels. */
+  effortLevels?: string[]
+  sampling?: boolean
+  reasoningContent?: boolean
+  recommendedApi?: 'chat' | 'responses'
   source: 'official' | 'api' | 'user'
   sourceUrl?: string
   checkedAt: number
@@ -70,6 +75,9 @@ export interface Provider {
   model: string
   /** Accio model code → provider model. */
   modelOverrides: Record<string, string>
+  /** Missing on existing configurations: keep all manually chosen parameters. */
+  parameterMode?: 'auto' | 'custom'
+  reasoningPreference?: 'auto' | 'fast' | 'deep'
   /** Fixed max output tokens; overrides what Accio asks for when set. */
   maxOutputTokens?: number
   /** Forward Accio's reasoning effort (OpenAI `reasoning_effort`, Anthropic `output_config.effort`). */

@@ -5,6 +5,8 @@ import http from 'node:http'
 const port = Number(process.argv[2] ?? 18999)
 let mode = 'ok'
 let requests = 0
+let metadataRequests = 0
+let lastGeneration
 
 http
   .createServer((req, res) => {
@@ -16,7 +18,7 @@ http
         res.end(JSON.stringify({ mode }))
         return
       }
-      if (req.url === '/__stats') { res.end(JSON.stringify({ requests })); return }
+      if (req.url === '/__stats') { res.end(JSON.stringify({ requests, metadataRequests, lastGeneration })); return }
       const auth = req.headers.authorization ?? ''
       if (auth !== 'Bearer sk-good') {
         res.writeHead(401, { 'content-type': 'application/json' })
@@ -24,12 +26,14 @@ http
         return
       }
       if (req.url?.endsWith('/models')) {
+        metadataRequests++
         res.writeHead(200, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ data: [{ id: 'mock-fast' }, { id: 'mock-pro' }, { id: 'mock-reasoner' }] }))
+        res.end(JSON.stringify({ data: [{ id: 'mock-fast', context_window: 64_000, max_output_tokens: 4096, effort: { supported_levels: ['low', 'high'] } }, { id: 'mock-pro', context_window: 128_000, max_output_tokens: 8192 }, { id: 'mock-reasoner' }] }))
         return
       }
       if (req.url?.endsWith('/chat/completions') || req.url?.endsWith('/responses')) {
         requests++
+        lastGeneration = JSON.parse(body)
         if (mode !== 'ok') {
           res.writeHead(Number(mode), { 'content-type': 'application/json', ...(mode === '429' ? { 'retry-after': '3' } : {}) })
           res.end(JSON.stringify({ error: { message: mode === '429' ? 'Rate limit reached for requests' : 'Upstream overloaded' } }))

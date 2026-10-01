@@ -6,13 +6,13 @@
 
 > An independent community tool. Not affiliated with Alibaba or Accio. It does not register accounts, rotate accounts, or bypass quotas.
 
-**[1.4.1 public preview · Windows x64](https://github.com/w2112515/accio-byok/releases/tag/v1.4.1).** The app defaults to English and also supports Simplified Chinese. Change **Language / 语言** in the top bar or Settings; your choice is saved for the next launch. Real provider sign-in, paid inference and recovery into the actual Accio app still require separate acceptance; local simulation does not establish these results.
+**[1.5.0 public preview · Windows x64](https://github.com/w2112515/accio-byok/releases/tag/v1.5.0).** The app defaults to English and also supports Simplified Chinese. Change **Language / 语言** in the top bar or Settings; your choice is saved for the next launch. Real provider sign-in, paid inference and recovery into the actual Accio app still require separate acceptance; local simulation does not establish these results.
 
 ## Download and get started
 
-1. Download the [Windows installer](https://github.com/w2112515/accio-byok/releases/download/v1.4.1/Accio-BYOK-Setup-1.4.1.exe) or [portable app](https://github.com/w2112515/accio-byok/releases/download/v1.4.1/Accio-BYOK-1.4.1-portable.exe). [SHA-256 checksums](https://github.com/w2112515/accio-byok/releases/download/v1.4.1/SHA256SUMS.txt) are provided. If an older version is running, quit it from the system tray first.
+1. Download the [Windows installer](https://github.com/w2112515/accio-byok/releases/download/v1.5.0/Accio-BYOK-Setup-1.5.0.exe) or [portable app](https://github.com/w2112515/accio-byok/releases/download/v1.5.0/Accio-BYOK-1.5.0-portable.exe). [SHA-256 checksums](https://github.com/w2112515/accio-byok/releases/download/v1.5.0/SHA256SUMS.txt) are provided. If an older version is running, quit it from the system tray first.
 2. Open **Providers → Add provider**, choose a connection type, and enter your API key. You can paste a base URL or a full Chat Completions, Responses, Anthropic Messages, or Gemini endpoint. The app normalizes the URL when you leave the field, preserving deployment subpaths.
-3. Select a model and choose **Test & enable**. After a successful check the connection is saved; review the destination, billing and compatibility before switching. **Save only** does not switch providers. Checks consume usage and are excluded from Accio totals. A tool round trip makes up to two requests. ChatGPT plan requests use server output limits; other checks request up to 1,024 output tokens. Bailian subscription plans exclude API test tools: save and verify through a permitted interactive task in Accio instead.
+3. Select a model. New connections use **Automatic** settings and read available model information; choose **Model default**, **Faster** or **Deeper** when supported, or switch to **Custom**. Then choose **Test & enable**. After a successful check the connection is saved; review the destination, billing and compatibility before switching. **Save only** does not switch providers. Checks consume usage and are excluded from Accio totals. A tool round trip makes up to two requests. ChatGPT plan requests use server output limits; other checks request up to 1,024 output tokens. Bailian subscription plans exclude API test tools: save and verify through a permitted interactive task in Accio instead.
 4. Choose **Start Accio**. If Accio is already running, connecting requires a confirmed restart and interrupts active tasks. A successful launch only confirms that the process started.
 5. Send a message in Accio, then check **Overview** or **Usage & diagnostics** for the actual model and result. Switch providers from the top bar or tray; the next request uses your selection.
 
@@ -36,11 +36,11 @@ The interface was inspired by [cc-switch](https://github.com/farion1231/cc-switc
 
 ## Features
 
-Version 1.4 adds saved official authorizations, separate subscription-key channels, connection-specific capability evidence, manual fallback candidates, context warnings, provider usage lookups, verified automatic session backups, recovery previews, and update/diagnostic controls. Existing navigation and provider presets remain in place. Real provider sign-in and paid inference have not yet been verified; local fixtures do not establish account eligibility or vendor compatibility.
+Version 1.5 adds automatic model settings, model-specific output limits, supported reasoning preferences and separate channel entries. Existing manual configurations remain unchanged until Automatic is selected. Version 1.4 introduced saved official authorizations, separate subscription-key channels, connection-specific capability evidence, manual fallback candidates, context warnings, provider usage lookups, verified automatic session backups, recovery previews, and update/diagnostic controls. Existing navigation and provider presets remain in place. Real provider sign-in and paid inference have not yet been verified; local fixtures do not establish account eligibility or vendor compatibility.
 
 | Area | Support |
 |---|---|
-| Providers | 18 visible presets: official APIs, Chinese providers, aggregators, local models, CPA / CLIProxyAPI, Sub2API, Grok2API, New API, and generic gateways |
+| Providers | 26 visible connection entries across 18 provider presets: API, subscription, OAuth, Chinese providers, aggregators, local models, CPA / CLIProxyAPI, Sub2API, Grok2API, New API, and generic gateways |
 | Protocols | OpenAI Chat Completions and Responses, Anthropic Messages, and native Gemini; use the protocol supported by your gateway |
 | Models | Fetch model lists, force refresh, and map individual Accio models; lists are cached by connection for 5 minutes and duplicate requests are merged |
 | Claude | Adaptive reasoning, multi-turn thought signatures, prompt caching, and reasoning effort; unmatched reasoning blocks are dropped when history changes |
@@ -54,7 +54,7 @@ Version 1.4 adds saved official authorizations, separate subscription-key channe
 
 ## Official authorization and subscription connections
 
-In a provider form, select **Authentication**. API-key connections remain available independently of plan connections. Do not paste website cookies or reuse a subscription login token as an API key.
+In a provider form, select **Access channel**. API-key connections remain available independently of plan connections. Do not paste website cookies or reuse a subscription login token as an API key.
 
 | Provider | Connection choices and limits |
 |---|---|

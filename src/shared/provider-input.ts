@@ -37,7 +37,7 @@ export function inferProviderKind(value: string): ProviderKind | undefined {
 
 export function normalizeProviderInput(input: ProviderInput, requireModel = false): ProviderInput {
   // Views and evidence are outputs, never configuration accepted back over IPC.
-  const fields = new Set(['id', 'name', 'kind', 'openaiApi', 'allowInsecureHttp', 'presetId', 'authMode', 'credentialId', 'fundingSource', 'subscriptionAcknowledged', 'fallbackEligible', 'baseUrl', 'apiKey', 'model', 'modelOverrides', 'maxOutputTokens', 'sendReasoningEffort', 'sendReasoningContent', 'thinking', 'thinkingBudget', 'promptCaching', 'sendSampling', 'extraHeaders', 'pricing', 'pricingModel', 'pricingUpdatedAt', 'modelInfo', 'note'])
+  const fields = new Set(['id', 'name', 'kind', 'openaiApi', 'allowInsecureHttp', 'presetId', 'authMode', 'credentialId', 'fundingSource', 'subscriptionAcknowledged', 'fallbackEligible', 'baseUrl', 'apiKey', 'model', 'modelOverrides', 'parameterMode', 'reasoningPreference', 'maxOutputTokens', 'sendReasoningEffort', 'sendReasoningContent', 'thinking', 'thinkingBudget', 'promptCaching', 'sendSampling', 'extraHeaders', 'pricing', 'pricingModel', 'pricingUpdatedAt', 'modelInfo', 'note'])
   input = Object.fromEntries(Object.entries(input).filter(([key]) => fields.has(key))) as ProviderInput
   if (!['openai', 'anthropic', 'gemini'].includes(input.kind)) throw new Error(tr("请选择有效的接口类型"))
   const baseUrl = normalizeBaseUrl(input.kind, input.baseUrl)
@@ -48,6 +48,8 @@ export function normalizeProviderInput(input: ProviderInput, requireModel = fals
   const endpoint = new URL(input.baseUrl).pathname
   const openaiApi = input.kind === 'openai' && /\/responses\/?$/.test(endpoint) ? 'responses' : input.kind === 'openai' && /\/chat\/completions\/?$/.test(endpoint) ? 'chat' : input.openaiApi
   const model = input.model.trim()
+  if (input.parameterMode !== undefined && !['auto', 'custom'].includes(input.parameterMode)) throw new Error(tx('Invalid parameter mode', '参数模式无效'))
+  if (input.reasoningPreference !== undefined && !['auto', 'fast', 'deep'].includes(input.reasoningPreference)) throw new Error(tx('Invalid reasoning preference', '推理偏好无效'))
   const authMode = input.authMode ?? 'api-key'
   if (!['api-key', 'subscription-key', 'openai-oauth', 'openrouter-oauth', 'none'].includes(authMode)) throw new Error(tx("Invalid authentication method", "认证方式无效"))
   if (input.fundingSource && !['api', 'subscription', 'local'].includes(input.fundingSource)) throw new Error(tx("Invalid billing source", "计费来源无效"))
@@ -74,6 +76,12 @@ export function normalizeProviderInput(input: ProviderInput, requireModel = fals
     if (info.model !== model || !['official', 'api', 'user'].includes(info.source) || !Number.isFinite(info.checkedAt)) throw new Error(tr("模型信息已过期，请重新读取或填写当前模型的信息"))
     for (const value of [info.contextWindow, info.maxOutputTokens]) {
       if (value !== undefined && (!Number.isSafeInteger(value) || value < 1)) throw new Error(tr("模型窗口和输出上限必须是正整数"))
+    }
+    if (info.effortLevels !== undefined && (!Array.isArray(info.effortLevels) || info.effortLevels.length > 10 || info.effortLevels.some((v) => !['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].includes(v)))) throw new Error(tx('Invalid model reasoning levels', '模型推理档位无效'))
+    if (info.thinking !== undefined && !['off', 'adaptive', 'budget'].includes(info.thinking)) throw new Error(tx('Invalid model thinking mode', '模型思考模式无效'))
+    if (info.recommendedApi !== undefined && !['chat', 'responses'].includes(info.recommendedApi)) throw new Error(tx('Invalid model protocol', '模型协议无效'))
+    for (const value of [info.sampling, info.reasoningContent, info.tools, info.vision]) {
+      if (value !== undefined && typeof value !== 'boolean') throw new Error(tx('Invalid model capability', '模型能力信息无效'))
     }
   }
   if (input.extraHeaders && (typeof input.extraHeaders !== 'object' || Array.isArray(input.extraHeaders))) throw new Error(tr("自定义请求头必须是名称和值的对象"))

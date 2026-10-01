@@ -1,5 +1,6 @@
 import { tr } from '../../../shared/i18n.ts'
-import type { Provider } from '../../../shared/types.ts'
+import type { ModelInfo, Provider } from '../../../shared/types.ts'
+import { autoEffort } from '../../../shared/model-info.ts'
 import {
   UpstreamError,
   clampEffort,
@@ -19,6 +20,7 @@ import {
   isHttpUrl,
   mergeHeaders,
   providerUrl,
+  positiveTokens,
   requireBody,
   resolveMaxTokens,
   type Adapter,
@@ -173,7 +175,7 @@ export function buildOpenAIBody(req: AccioRequest, ctx: Pick<AdapterContext, 'pr
     stream: true,
     stream_options: { include_usage: true },
   }
-  body[isOpenAI ? 'max_completion_tokens' : 'max_tokens'] = resolveMaxTokens(req, provider, 16384)
+  body[isOpenAI ? 'max_completion_tokens' : 'max_tokens'] = resolveMaxTokens(req, provider, 16384, model)
   if (isOpenAI) body.store = false
   if (req.tools.length) {
     body.tools = req.tools.map((t) => ({
@@ -189,8 +191,11 @@ export function buildOpenAIBody(req: AccioRequest, ctx: Pick<AdapterContext, 'pr
   }
   if (req.stopSequences.length) body.stop = req.stopSequences.slice(0, 4)
   if (provider.sendReasoningEffort) {
-    const effort = clampEffort(req.reasoningEffort, isOpenAI ? ['minimal', 'low', 'medium', 'high', 'xhigh'] : ['low', 'medium', 'high'])
-    if (effort) body.reasoning_effort = effort
+    const effort = provider.parameterMode === 'auto' ? autoEffort(provider, model) : clampEffort(req.reasoningEffort, isOpenAI ? ['minimal', 'low', 'medium', 'high', 'xhigh'] : ['low', 'medium', 'high'])
+    if (effort) {
+      if (provider.parameterMode === 'auto' && hostOf(provider.baseUrl) === 'openrouter.ai') body.reasoning = { effort }
+      else body.reasoning_effort = effort
+    }
   }
   const rf = responseFormat(req.responseFormat)
   if (rf) body.response_format = rf
@@ -283,4 +288,44 @@ async function listModels(provider: Provider, fetch: FetchLike, signal?: AbortSi
   return list.map((m) => m.id ?? (m as { name?: string }).name ?? '').filter(Boolean).sort()
 }
 
-export const openaiAdapter: Adapter = { headers: openaiHeaders, stream, listModels }
+/** Same endpoint and credentials as inference. Metadata is not a capability probe. */
+async function describeModel(provider: Provider, fetch: FetchLike, signal?: AbortSignal): Promise<ModelInfo | undefined> {
+  const base = new URL(provider.baseUrl)
+  const local = ['localhost', '127.0.0.1', '[::1]'].includes(base.hostname) && base.pathname.replace(/\/+$/, '') === '/v1'
+  const ollama = local && provider.presetId === 'ollama'
+  const studio = local && provider.presetId === 'lmstudio'
+  const sourceUrl = ollama ? `${base.origin}/api/ps` : studio ? `${base.origin}/api/v1/models` : providerUrl(provider, 'models')
+  const response = await ensureOk(await fetch(sourceUrl, { headers: openaiHeaders(provider), signal }), provider.name)
+  const payload = await response.json() as Record<string, any>
+  const list = payload.data ?? payload.models
+  if (!Array.isArray(list)) return undefined
+  const row = list.find((m) => m && (m.id === provider.model || m.name === provider.model || m.slug === provider.model || m.key === provider.model || (studio && m.loaded_instances?.some((i: any) => i.id === provider.model))))
+  if (!row) return undefined
+  const info: ModelInfo = { model: provider.model, windowKind: 'context', source: 'api', sourceUrl, checkedAt: Date.now() }
+  if (ollama) {
+    info.contextWindow = positiveTokens(row.context_length)
+  } else if (studio) {
+    const instances = Array.isArray(row.loaded_instances) ? row.loaded_instances : []
+    const instance = instances.find((i: any) => i.id === provider.model) ?? (instances.length === 1 ? instances[0] : undefined)
+    info.contextWindow = positiveTokens(instance?.config?.context_length)
+    info.tools = typeof row.capabilities?.trained_for_tool_use === 'boolean' ? row.capabilities.trained_for_tool_use : undefined
+    info.vision = typeof row.capabilities?.vision === 'boolean' ? row.capabilities.vision : undefined
+    // A downloaded model's max_context_length is not its currently loaded window.
+  } else {
+    info.contextWindow = positiveTokens(row.context_window ?? row.context_length ?? row.top_provider?.context_length)
+    info.maxOutputTokens = positiveTokens(row.max_output_tokens ?? row.top_provider?.max_completion_tokens)
+    const params = Array.isArray(row.supported_parameters) ? row.supported_parameters : undefined
+    if (params) { info.tools = params.includes('tools'); info.sampling = params.includes('temperature') && params.includes('top_p') }
+    const modalities = row.input_modalities ?? row.architecture?.input_modalities
+    if (Array.isArray(modalities)) info.vision = modalities.includes('image')
+    const levels = row.effort?.supported_levels
+    if (Array.isArray(levels)) info.effortLevels = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].filter((v) => levels.includes(v))
+    if (base.hostname === 'openrouter.ai' && row.reasoning && Object.hasOwn(row.reasoning, 'supported_efforts')) {
+      const levels = row.reasoning.supported_efforts
+      if (levels === null || Array.isArray(levels)) info.effortLevels = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].filter((v) => levels === null || levels.includes(v))
+    }
+  }
+  return Object.keys(info).some((key) => !['model', 'windowKind', 'source', 'sourceUrl', 'checkedAt'].includes(key) && info[key as keyof ModelInfo] !== undefined) ? info : undefined
+}
+
+export const openaiAdapter: Adapter = { headers: openaiHeaders, stream, listModels, describeModel }

@@ -1,4 +1,5 @@
 import { tr } from '../../../shared/i18n.ts'
+import { autoEffort } from '../../../shared/model-info.ts'
 import { createHash } from 'node:crypto'
 import { UpstreamError, clampEffort, safeToolId, unwrapSignature, wrapSignature, type AccioRequest, type AdapterEvent, type Usage } from '../accio.ts'
 import { readSse, tryJson } from '../sse.ts'
@@ -53,7 +54,7 @@ export function buildResponsesBody(req: AccioRequest, ctx: Connection): Item {
   const body: Item = {
     model: ctx.model, input, stream: true, store: false,
     include: ['reasoning.encrypted_content'],
-    max_output_tokens: resolveMaxTokens(req, ctx.provider, 16384),
+    max_output_tokens: resolveMaxTokens(req, ctx.provider, 16384, ctx.model),
   }
   if (req.systemInstruction) body.instructions = req.systemInstruction
   if (req.tools.length) {
@@ -66,7 +67,7 @@ export function buildResponsesBody(req: AccioRequest, ctx: Connection): Item {
     if (req.topP !== undefined) body.top_p = req.topP
   }
   if (ctx.provider.sendReasoningEffort) {
-    const effort = clampEffort(req.reasoningEffort, ['minimal', 'low', 'medium', 'high', 'xhigh'])
+    const effort = ctx.provider.parameterMode === 'auto' ? autoEffort(ctx.provider, ctx.model) : clampEffort(req.reasoningEffort, ['minimal', 'low', 'medium', 'high', 'xhigh'])
     if (effort) body.reasoning = { effort }
   }
   const format = responseFormat(req.responseFormat) as Item | undefined
