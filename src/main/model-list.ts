@@ -48,7 +48,8 @@ export class ModelListCache {
     if (pending) return [...await pending]
     const generation = this.generation
     const request = ADAPTERS[provider.kind].listModels(provider, fetch, AbortSignal.timeout(20_000)).then((list) => {
-      const models = [...new Set(list.filter((m) => typeof m === 'string' && m.trim()).map((m) => m.trim()))].sort()
+      const models = [...new Set(list.filter((m) => typeof m === 'string' && m.trim()).map((m) => m.trim()))]
+      if (provider.authMode !== 'openai-oauth') models.sort()
       if (generation === this.generation) {
         this.entries.delete(key)
         this.entries.set(key, { expires: Date.now() + 5 * 60_000, models })

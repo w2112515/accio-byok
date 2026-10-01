@@ -1,14 +1,70 @@
-import { tr } from '../../../shared/i18n.ts'
+import { tr, tx } from '../../../shared/i18n.ts'
 import { FolderOpen, Link2, Monitor, Moon, RotateCw, ShieldCheck, Sun } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import type { AppSettings, NetworkProxyMode } from '../../../shared/types.ts'
+import type { AppSettings, NetworkProxyMode, UpdateInfo, DiagnosticPreview } from '../../../shared/types.ts'
 import { validateUpstreamGateway } from '../../../shared/provider-input.ts'
 import { PageHeader } from '../App.tsx'
 import { AppLogo } from '../components/brand.tsx'
-import { Badge, Button, Card, CardHeader, Input, Segmented, SettingRow, Skeleton, StatusDot, Switch } from '../components/ui.tsx'
+import { Badge, Button, Card, CardHeader, Input, Segmented, SettingRow, Sheet, Skeleton, StatusDot, Switch } from '../components/ui.tsx'
 import { api } from '../lib/api.ts'
 import { useStore } from '../lib/store.tsx'
+import { fmtDateTime } from '../lib/format.ts'
+
+function MaintenanceGroup() {
+  const { state } = useStore()
+  const [update, setUpdate] = useState<UpdateInfo>()
+  const [download, setDownload] = useState<{ path: string; configBackup: string }>()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string>()
+  const [preview, setPreview] = useState<DiagnosticPreview>()
+  const [includeContent, setIncludeContent] = useState(false)
+  const run = async (job: () => Promise<unknown>) => { setBusy(true); setError(undefined); try { await job() } catch (e) { setError((e as Error).message) } finally { setBusy(false) } }
+  return <Group title={tx('Updates & diagnostics', '更新与诊断')}>
+    <SettingRow title={tx('Accio compatibility', 'Accio 兼容性')} description={`${tx('Installed', '已安装')}: ${state?.accio.version ?? tx('Unknown', '未知')} · ${tx('Protocol baseline: 0.33 · reviewed 2026-10-01. Other versions need verification.', '协议验证基线：0.33 · 核对于 2026-10-01。其他版本仍需验证。')}`}>{null}</SettingRow>
+    <SettingRow title={tx('Accio BYOK updates', 'Accio BYOK 更新')} description={update ? `${update.version}${update.prerelease ? ` · ${tx('Prerelease', '预发布')}` : ''} · ${update.newer ? tx('Update available', '有新版本') : tx('No newer version found', '未发现更高版本')} · ${fmtDateTime(update.checkedAt)}` : tx('Check the project’s GitHub releases when you choose.', '手动检查项目 GitHub 发布页。')}>
+      <Button size="sm" disabled={busy} onClick={() => void run(async () => { setUpdate(await api.checkUpdate()) })}>{tx('Check updates', '检查更新')}</Button>
+    </SettingRow>
+    {update ? <div className="space-y-3 px-5 py-4">
+      <pre className="max-h-44 overflow-auto whitespace-pre-wrap break-words text-[12px] text-muted">{update.notes || tx('No release notes.', '没有发布说明。')}</pre>
+      <div className="flex flex-wrap gap-2"><Button size="sm" onClick={() => void api.openExternal(update.pageUrl)}>{tx('Release page', '发布页面')}</Button>{update.newer ? update.assets.map((a) => <Button key={a.name} size="sm" disabled={busy || !a.sha256} onClick={() => void run(async () => { setDownload(await api.downloadUpdate(a.name)) })}>{a.name.includes('Setup') ? tx('Download installer', '下载安装包') : tx('Download portable', '下载便携版')}{!a.sha256 ? ` · ${tx('No checksum', '无校验值')}` : ''}</Button>) : null}</div>
+      <p className="text-[12px] text-subtle">{tx('Downloads require the release’s SHA-256 checksum. Keep the previous executable; rollback requires its matching configuration and compatible Accio data. Credentials are stored separately and are never rolled back.', '下载须通过发布包 SHA-256 校验。请保留旧程序；回退需要对应配置及兼容的 Accio 数据，单独保存的授权凭据不参与回退。')}</p>
+    </div> : null}
+    {download ? <SettingRow title={tx('Verified download ready', '下载校验通过')} description={download.path}><Button size="sm" disabled={busy} onClick={() => void run(() => api.installUpdate())}>{tx('Open update', '打开更新')}</Button><Button size="sm" onClick={() => void api.openPath(state!.dataDir + '/updates')}>{tx('Backups & downloads', '备份与下载')}</Button></SettingRow> : null}
+    <SettingRow title={tx('Include captured conversations', '包含已捕获会话')} description={tx('Optional: up to three recent captures. Known credentials are masked, but private text may remain. Review the preview before saving.', '可选：最多三条近期捕获。会遮盖已知凭据，但正文可能仍含隐私，请在保存前逐项核对预览。')} htmlFor="diagnostic-content"><Switch id="diagnostic-content" checked={includeContent} onCheckedChange={(v) => { setIncludeContent(v); setPreview(undefined) }} /></SettingRow>
+    <SettingRow title={tx('Diagnostic export', '诊断导出')} description={tx('Default: status, timings and usage only. No keys, endpoints, account names or conversation text. Nothing is uploaded.', '默认仅含状态、耗时和用量，不含密钥、地址、账号名称和会话正文，不会上传。')}><Button size="sm" disabled={busy} onClick={() => void run(async () => { setPreview(await api.diagnosticPreview(includeContent)) })}>{tx('Preview report', '预览报告')}</Button></SettingRow>
+    {error ? <p role="alert" className="px-5 py-3 text-[12px] text-danger">{error}</p> : null}
+    <SettingRow title={tx('Restore configuration backup', '恢复配置备份')} description={tx('For rollback to the version that created the backup. Close Accio first; OAuth tokens are not restored.', '用于回退到生成该备份的版本，需先关闭 Accio；不恢复 OAuth 令牌。')}><Button size="sm" disabled={busy} onClick={() => void run(() => api.restoreConfigBackup())}>{tx('Choose backup', '选择备份')}</Button></SettingRow>
+    <Sheet open={!!preview} onOpenChange={(v) => { if (!v) setPreview(undefined) }} title={tx('Review diagnostic export', '审阅诊断导出')}>
+      <Button className="mb-4" disabled={busy} onClick={() => void run(async () => { const saved = await api.exportDiagnostic(preview!.id); if (saved) { toast.success(tx('Diagnostic saved', '诊断已保存')); setPreview(undefined) } })}>{tx('Save reviewed report', '保存已审阅报告')}</Button>
+      {preview?.includesContent ? <p className="mb-3 text-[12px] text-warning">{tx('Contains conversation content. Check for personal information and secrets before sharing.', '包含会话内容，请在分享前检查个人信息及隐私凭据。')}</p> : null}
+      <pre className="whitespace-pre-wrap break-all font-mono text-[11px]" data-selectable>{preview?.content}</pre>
+    </Sheet>
+  </Group>
+}
+
+function SavedAccounts() {
+  const { state } = useStore()
+  const [busy, setBusy] = useState<string>()
+  const run = async (id: string, disconnect: boolean) => {
+    setBusy(id)
+    try {
+      if (disconnect) {
+        const result = await api.signOut(id)
+        toast.success(tx('Signed out locally', '已退出本地授权'), { description: result.remoteRevoked ? tx('The refresh token was revoked remotely.', '已在远端撤销刷新令牌。') : tx('Remote revocation is unconfirmed. Remove this app/key in the provider’s settings if needed.', '未确认远端撤销，必要时请在供应商设置删除本应用授权或 Key。') })
+      } else await api.resumeAuthorization(id)
+    } catch (e) { toast.error((e as Error).message) } finally { setBusy(undefined) }
+  }
+  if (!state?.authorizations?.length && !state?.authorizationError) return null
+  return <Group title={tx('Saved authorizations', '已保存授权')} description={tx('Connections reference these local encrypted registrations. Signing out does not delete your connection profiles.', '连接引用这些本地加密授权，退出不会删除连接配置。')}>
+    {state.authorizationError ? <p role="alert" className="p-4 text-[12px] text-danger">{state.authorizationError}</p> : null}
+    {state.authorizations?.map((a) => <SettingRow key={a.id} title={a.label} description={a.pauseReason || (a.connected ? tx('Connected', '已连接') : tx('Signed out', '已退出'))}>
+      {a.pauseReason && a.connected ? <Button size="sm" disabled={!!busy} onClick={() => void run(a.id, false)}>{tx('Resume after usage review', '核对用量后恢复')}</Button> : null}
+      <Button size="sm" onClick={() => void api.openExternal(a.service === 'openai' ? 'https://chatgpt.com/settings/usage' : 'https://openrouter.ai/keys')}>{tx('Manage usage', '管理用量')}</Button>
+      <Button size="sm" disabled={!!busy || !a.connected} onClick={() => void run(a.id, true)}>{tx('Sign out', '退出授权')}</Button>
+    </SettingRow>)}
+  </Group>
+}
 
 function Group({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
   return (
@@ -182,6 +238,8 @@ export function SettingsPage() {
           </SettingRow>
         </Group>
 
+        <SavedAccounts />
+        <MaintenanceGroup />
         <Group title={tr("隐私与调试")}>
           <SettingRow title={tr("API Key 加密")} description={tr("使用 Windows 数据保护 API（DPAPI）加密，只有当前 Windows 用户能解密。")}>
             {state.encryptionAvailable ? (

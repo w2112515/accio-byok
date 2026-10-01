@@ -15,6 +15,12 @@ import type {
   TestResult,
   TestScope,
   UsageStats,
+  AuthorizationView,
+  BackupPreview,
+  AutoBackupStatus,
+  UpdateInfo,
+  DiagnosticPreview,
+  ProviderUsageSnapshot,
 } from './types.ts'
 
 export interface AppState {
@@ -29,10 +35,23 @@ export interface AppState {
   configError?: string
   operationError?: string
   busyOperation?: string
+  authorizations?: AuthorizationView[]
+  authorizationError?: string
+  autoBackup?: AutoBackupStatus
 }
 
 /** Methods invokable from the renderer. All return promises over IPC. */
 export interface AccioSwitchApi {
+  checkUpdate(): Promise<UpdateInfo>
+  downloadUpdate(name: string): Promise<{ path: string; configBackup: string }>
+  installUpdate(): Promise<void>
+  restoreConfigBackup(): Promise<void>
+  diagnosticPreview(includeContent?: boolean): Promise<DiagnosticPreview>
+  exportDiagnostic(id: string): Promise<string | undefined>
+  signIn(service: 'openai' | 'openrouter', existingId?: string): Promise<AuthorizationView>
+  cancelSignIn(): Promise<void>
+  signOut(id: string): Promise<{ remoteRevoked: boolean }>
+  resumeAuthorization(id: string): Promise<void>
   getState(): Promise<AppState>
   saveProvider(input: ProviderInput, activate?: boolean): Promise<ProviderView>
   recoverConfig(action: 'retry' | 'reset'): Promise<void>
@@ -43,6 +62,7 @@ export interface AccioSwitchApi {
   testProvider(input: ProviderInput, scope?: TestScope): Promise<TestResult>
   listProviderModels(input: ProviderInput, refresh?: boolean): Promise<string[]>
   providerModelInfo(input: ProviderInput): Promise<ModelInfo | undefined>
+  providerUsage(id: string): Promise<ProviderUsageSnapshot>
   updateSettings(patch: Partial<AppSettings>): Promise<AppSettings>
   restartProxy(): Promise<ProxyStatus>
 
@@ -60,6 +80,8 @@ export interface AccioSwitchApi {
 
   listAccounts(): Promise<AccioAccount[]>
   listBackups(): Promise<BackupInfo[]>
+  previewBackup(id: string, targetAccountId?: string): Promise<BackupPreview>
+  runAutoBackup(): Promise<AutoBackupStatus>
   createBackup(accountId: string, note?: string): Promise<BackupInfo>
   restoreBackup(id: string): Promise<{ safetyBackupId: string }>
   migrateBackup(id: string, targetAccountId: string): Promise<MigrationReport>

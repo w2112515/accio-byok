@@ -5,8 +5,8 @@ import os from 'node:os'
 import path from 'node:path'
 import type { AccioModelInfo } from '../shared/types.ts'
 
-export const ACCIO_DIR = path.join(os.homedir(), '.accio')
-export const ACCIO_APPDATA = path.join(process.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming'), 'Accio')
+export const ACCIO_DIR = process.env.ASW_USER_DATA && process.env.ASW_ACCIO_DIR ? path.resolve(process.env.ASW_ACCIO_DIR) : path.join(os.homedir(), '.accio')
+export const ACCIO_APPDATA = process.env.ASW_USER_DATA && process.env.ASW_ACCIO_APPDATA ? path.resolve(process.env.ASW_ACCIO_APPDATA) : path.join(process.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming'), 'Accio')
 export const DEFAULT_GATEWAY = 'https://phoenix-gw.alibaba.com'
 
 function run(cmd: string, args: string[], strict = false): Promise<string> {
@@ -54,6 +54,13 @@ export async function listAccioPids(): Promise<number[]> {
     .map(Number)
 }
 
+export async function readAccioVersion(exe: string): Promise<string | undefined> {
+  if (!exe || !fs.existsSync(exe)) return undefined
+  const literal = exe.replace(/'/g, "''")
+  const version = (await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `(Get-Item -LiteralPath '${literal}').VersionInfo.ProductVersion`])).trim()
+  return /^\d+\.\d+(?:\.[\w.+-]+)*$/.test(version) ? version : undefined
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 /** Ask Accio to close, then force it after a grace period. */
@@ -78,7 +85,7 @@ export async function launchAccio(exe: string, gatewayUrl?: string): Promise<voi
   for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined) continue
     // Don't leak our own Electron runtime settings into another Electron app.
-    if (/^(ELECTRON_|CHROME_|NODE_OPTIONS$|GATEWAY_BASE_URL$|ACCIO_GATEWAY_URL$)/i.test(k)) continue
+    if (/^(ELECTRON_|CHROME_|ASW_|NODE_OPTIONS$|GATEWAY_BASE_URL$|ACCIO_GATEWAY_URL$)/i.test(k)) continue
     env[k] = v
   }
   if (gatewayUrl) env.GATEWAY_BASE_URL = gatewayUrl

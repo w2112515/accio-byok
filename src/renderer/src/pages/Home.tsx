@@ -1,4 +1,7 @@
-import { tr } from '../../../shared/i18n.ts'
+import { tr, tx } from '../../../shared/i18n.ts'
+import { ContextStatus } from '../components/ContextStatus.tsx'
+import { OverviewBackupStatus } from '../components/BackupFreshness.tsx'
+import { checkNeedsReview, matchesConnection } from '../../../shared/connection-status.ts'
 import { AlertTriangle, ArrowRight, Check, CheckCircle2, CircleDashed, Cpu, MoreHorizontal, Plus, Power, RotateCw, Sparkles, X, XCircle, Zap } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
@@ -94,7 +97,7 @@ function HeroCard() {
     tone = 'success'
     headline = byok ? tr("已选择 {0}", activeProvider.name) : tr("已选择 Accio 官方模型")
     detail = byok
-      ? tr("模型请求由你的 Key 处理（{0}），登录、插件、同步等其余功能照常走官方。", activeProvider.model || tr("未设置模型"))
+      ? tx(`Model requests use ${activeProvider.model || 'the selected model'} through this connection. Sign-in, plugins and sync continue through Accio's gateway.`, `模型请求通过此连接使用 ${activeProvider.model || '所选模型'}；登录、插件和同步等功能仍走 Accio 官方网关。`)
       : tr("请求原样转发到 Accio 官方网关，使用 Accio 自带额度。随时可以切到自己的模型。")
   } else if (accio.launchedByUs) {
     tone = 'neutral'
@@ -187,7 +190,10 @@ function HeroCard() {
         </div>
       </div>
       <EvidenceStrip />
+      <OverviewBackupStatus />
+      <ContextStatus />
       {byok ? <div className="px-6 pb-4"><ConnectionStatus value={activeProvider.protection} /></div> : null}
+      {byok && activeProvider.checks?.some((c) => c.ok && checkNeedsReview(c)) ? <div className="flex flex-wrap items-center justify-between gap-2 px-6 pb-3 text-[12px] text-warning"><span>{tx('Some capability checks are over 30 days old. Review them before relying on those features.', '部分能力检测已超过 30 天，依赖这些功能前建议复核。')}</span><Button size="sm" onClick={() => go('providers', `checks:${activeProvider.id}`)}>{tx('Review checks', '复核检测')}</Button></div> : null}
       <Confirm
         open={confirm}
         onOpenChange={setConfirm}
@@ -210,7 +216,7 @@ function EvidenceStrip() {
   useTicker()
   if (!state) return null
   const byok = state.activeProviderId !== OFFICIAL_PROVIDER_ID && activeProvider ? activeProvider : undefined
-  const last = logs.find((l) => l.providerId === (byok ? byok.id : OFFICIAL_PROVIDER_ID))
+  const last = logs.find((l) => byok ? matchesConnection(l, byok) : l.providerId === OFFICIAL_PROVIDER_ID)
   const edit = byok ? () => go('providers', `edit:${byok.id}`) : undefined
 
   let tone: 'success' | 'warning' | 'danger' | 'neutral' = 'neutral'
@@ -227,7 +233,11 @@ function EvidenceStrip() {
     tone = 'danger'
     body = byok.keyError
     actions = <Button size="sm" onClick={edit}>{tr("重新填写 Key")}</Button>
-  } else if (byok && !byok.hasApiKey && findPreset(byok.presetId)?.category !== 'local') {
+  } else if (byok?.authMode?.endsWith('-oauth') && (!byok.authorization?.connected || byok.authorization.pauseReason)) {
+    tone = 'warning'
+    body = byok.authorization?.pauseReason || tx('Sign in to the selected account.', '请登录所选账号。')
+    actions = <Button size="sm" onClick={edit}>{tx('Manage connection', '管理连接')}</Button>
+  } else if (byok && !byok.authMode?.endsWith('-oauth') && !byok.hasApiKey && findPreset(byok.presetId)?.category !== 'local') {
     tone = 'warning'
     body = tr("{0} 还没有填写 API Key。", byok.name)
     actions = (
@@ -236,7 +246,7 @@ function EvidenceStrip() {
     )
   } else if (!last) {
     body = byok
-      ? tr("还没有请求经过 {0}。{1}", byok.name, state.accio.takenOver || state.accio.launchedByUs ? tr("在 Accio 里发一条消息就能验证。") : tr("启动并接入 Accio 后发一条消息就能验证。"))
+      ? tx('Waiting for a request from the current connection. Send a message in Accio to verify it.', '等待当前连接的新请求，请在 Accio 中发送一条消息验证。')
       : tr("还没有记录到请求。通过 Accio BYOK 启动 Accio 后，每次模型调用都会出现在这里。")
   } else if (last.status === 'error') {
     tone = 'danger'
@@ -277,15 +287,15 @@ function EvidenceStrip() {
     <div
       role="status"
       className={cn(
-        'relative flex min-h-12 items-center gap-3 border-t px-6 py-2.5 text-[12.5px]',
+        'relative flex min-h-12 flex-wrap items-center gap-3 border-t px-6 py-2.5 text-[12.5px]',
         tone === 'danger' ? 'border-danger/25 bg-danger-soft' : tone === 'warning' ? 'border-warning/30 bg-warning-soft' : 'border-border bg-fg/[0.02]',
       )}
     >
       <Icon className={cn('size-4 shrink-0', { success: 'text-success', warning: 'text-warning', danger: 'text-danger', neutral: 'text-subtle' }[tone])} />
-      <div className="min-w-0 flex-1 truncate" data-selectable>
+      <div className="min-w-48 flex-1 break-words leading-relaxed" data-selectable>
         {body}
       </div>
-      {actions ? <div className="flex shrink-0 items-center gap-1.5">{actions}</div> : null}
+      {actions ? <div className="flex flex-wrap items-center gap-1.5">{actions}</div> : null}
     </div>
   )
 }
@@ -345,7 +355,7 @@ function Onboarding() {
       action: <StartAccioButton />,
     },
     {
-      done: logs.some((l) => l.providerId === active?.id && l.status === 'ok' && l.ts >= Math.max(state.accio.startedAt ?? 0, state.proxy.startedAt ?? 0)),
+      done: !!active && logs.some((l) => matchesConnection(l, active) && l.status === 'ok' && l.ts >= Math.max(state.accio.startedAt ?? 0, state.proxy.startedAt ?? 0)),
       title: tr("在 Accio 里发一条消息"),
       desc: tr("这里出现一条成功的请求，就说明一切就绪。"),
       action: null,
@@ -521,7 +531,7 @@ export function HomePage() {
                 <Kpi label={tr("今日请求")} value={t ? fmtNumber(t.requests) : '—'} sub={!t || !t.requests ? tr("暂无请求") : tr("{0} 失败 · {1} 取消 · 首字 {2}", t.errors, t.aborted ?? 0, fmtMs(ttft))} />
                 <Kpi label={tr("输入 Token")} value={t ? fmtTokens(t.inputTokens) : '—'} sub={t && t.cachedTokens ? tr("缓存命中 {0}", fmtTokens(t.cachedTokens)) : undefined} />
                 <Kpi label={tr("输出 Token")} value={t ? fmtTokens(t.outputTokens) : '—'} sub={t && t.reasoningTokens ? tr("含思考 {0}", fmtTokens(t.reasoningTokens)) : undefined} />
-                <Kpi label={tr("已估算花费")} value={t?.estimatedRequests ? fmtCost(t.costUsd) : '—'} sub={t ? tr("完整计价 {0} / {1} 次", t.fullyEstimatedRequests ?? 0, t.byokRequests ?? 0) : undefined} hint={tr("只合计有单价和用量的部分，未知费用不代表免费")} />
+                <Kpi label={tr("已估算花费")} value={t?.estimatedRequests ? fmtCost(t.costUsd) : '—'} sub={t ? `${t.fullyEstimatedRequests ?? 0} / ${t.apiRequests ?? 0} ${tx('API requests priced', '次 API 完整计价')}` : undefined} hint={tr("只合计有单价和用量的部分，未知费用不代表免费")} />
               </div>
             </Card>
             <Card>

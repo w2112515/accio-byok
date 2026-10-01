@@ -1,4 +1,4 @@
-import { setLanguage, tr } from '../shared/i18n.ts'
+import { setLanguage, tr, tx } from '../shared/i18n.ts'
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, safeStorage, session, shell, Tray } from 'electron'
 import os from 'node:os'
 import fs from 'node:fs'
@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import iconPath from '../../resources/icon.png?asset'
 import trayIconPath from '../../resources/tray.png?asset'
 import type { AccioSwitchApi, AppState } from '../shared/api.ts'
+import type { AutoBackupStatus } from '../shared/types.ts'
 import { OFFICIAL_PROVIDER_ID, type AccioStatus, type AppEvent, type AppSettings, type ProviderInput, type TestResult, type TestScope } from '../shared/types.ts'
 import {
   ACCIO_APPDATA,
@@ -17,6 +18,7 @@ import {
   launchAccio,
   listAccioPids,
   readModelCatalog,
+  readAccioVersion,
   stopAccio,
 } from './accio.ts'
 import { ConfigStore, validateSettings, type SecretBox } from './config.ts'
@@ -27,6 +29,14 @@ import { ModelListCache } from './model-list.ts'
 import { protectedFetch, redactProviderError } from './proxy/request-policy.ts'
 import { ProxyServer } from './proxy/server.ts'
 import { SessionManager } from './sessions.ts'
+import { AuthorizationStore } from './authorization.ts'
+import { ConnectionChecks, connectionFingerprint } from './connection-checks.ts'
+import { checkNeedsReview } from '../shared/connection-status.ts'
+import { fundingLabel } from '../shared/provider-access.ts'
+import { usableModelInfo } from '../shared/model-info.ts'
+import { Maintenance, diagnosticPreview } from './maintenance.ts'
+import type { DiagnosticPreview } from '../shared/types.ts'
+import { readProviderUsage } from './provider-usage.ts'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 setLanguage('en')
@@ -64,6 +74,12 @@ let logs: LogStore
 let sessions: SessionManager
 let proxy: ProxyServer
 let netFetch: ReturnType<typeof protectedFetch>
+let authorizations: AuthorizationStore
+let connectionChecks: ConnectionChecks
+let maintenance: Maintenance
+let diagnostics: DiagnosticPreview | undefined
+let accioVersion: string | undefined
+let autoBackupStatus: AutoBackupStatus = { state: 'disabled' }
 const modelLists = new ModelListCache()
 
 const box: SecretBox = {
@@ -248,62 +264,145 @@ function notifyFailure(providerId: string, providerName: string, error: string, 
 // ---------------------------------------------------------------------------
 // Provider test
 
-async function testProvider(input: ProviderInput, scope: TestScope = 'text'): Promise<TestResult> {
+async function probeProvider(input: ProviderInput, scope: TestScope = 'text'): Promise<TestResult> {
   if (busyOperation) throw new Error(tr("正在{0}，请稍后测试", busyOperation))
-  if (!['text', 'tools', 'image'].includes(scope)) throw new Error(tr("未知的检测类型"))
-  const provider = { ...config.draft(input), maxOutputTokens: 1024, thinking: 'off' as const, sendReasoningEffort: false }
+  if (!['text', 'tools', 'image', 'multiturn'].includes(scope)) throw new Error(tr("未知的检测类型"))
+  const provider = { ...await authorizations.prepare(config.draft(input)), maxOutputTokens: 1024, thinking: 'off' as const, sendReasoningEffort: false }
   networkTests++
   try {
   const started = Date.now()
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), 60_000)
   let out = ''
+  const toolProbe = scope === 'tools' || scope === 'multiturn'
   // Synthetic fixtures only: no user conversation, files, or executable tools.
-  const prompt = scope === 'tools' ? 'Call the connection_probe tool with value "pong". Do not answer with text.' : scope === 'image' ? 'What is the dominant color of this image? Reply with one English color word.' : 'Reply with the single word: pong'
+  const prompt = toolProbe ? 'Call the connection_probe tool with value "pong". Do not answer with text. After the tool returns, reply with the exact result value.' : scope === 'image' ? 'What is the dominant color of this image? Reply with one English color word.' : 'Reply with the single word: pong'
   const redSquare = 'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKElEQVR4nO3NsQ0AAAzCMP5/un0CNkuZ41wybXsHAAAAAAAAAAAAxR4yw/wuPL6QkAAAAABJRU5ErkJggg=='
-  const result = await streamByok({
-    req: parseAccioRequest({ model: 'test', max_output_tokens: 1024, include_thoughts: false,
-      tools: scope === 'tools' ? [{ name: 'connection_probe', description: 'A harmless connection check. Returns nothing and performs no action.', parameters_json: JSON.stringify({ type: 'object', properties: { value: { type: 'string', enum: ['pong'] } }, required: ['value'], additionalProperties: false }) }] : [],
-      contents: [{ role: 'user', parts: [{ text: prompt }, ...(scope === 'image' ? [{ inline_data: { mime_type: 'image/png', data: redSquare } }] : [])] }] }),
+  const probeRequest = { model: 'test', max_output_tokens: 1024, include_thoughts: scope === 'multiturn',
+      tools: toolProbe ? [{ name: 'connection_probe', description: 'A harmless connection check. Returns a synthetic result and performs no action.', parameters_json: JSON.stringify({ type: 'object', properties: { value: { type: 'string', enum: ['pong'] } }, required: ['value'], additionalProperties: false }) }] : [],
+      contents: [{ role: 'user', parts: [{ text: prompt }, ...(scope === 'image' ? [{ inline_data: { mime_type: 'image/png', data: redSquare } }] : [])] }] }
+  let result = await streamByok({
+    req: parseAccioRequest(probeRequest),
     provider,
     model: provider.model,
     fetch: netFetch,
     signal: ctrl.signal,
     write: (c) => (out += c),
   })
-  clearTimeout(timer)
   let text = ''
   let validCall = false
+  const modelParts: Record<string, any>[] = []
+  let probeCall: { id: string; name: string } | undefined
   for (const block of out.split('\n\n')) {
     if (!block.startsWith('data: ') || block.includes('[DONE]')) continue
     try {
       const f = JSON.parse(block.slice(6))
       for (const p of f.content?.parts ?? []) {
+        modelParts.push(p)
         if (typeof p.text === 'string' && !p.thought) text += p.text
         if (f.turnComplete && p.functionCall?.name === 'connection_probe') {
           const args = JSON.parse(p.functionCall.argsJson)
           validCall ||= args.value === 'pong' && Object.keys(args).length === 1
+          if (validCall) probeCall = p.functionCall
         }
       }
     } catch {
       /* ignore */
     }
   }
+  if (scope === 'multiturn' && validCall && probeCall && result.status === 'ok') {
+    out = ''
+    result = await streamByok({
+      req: parseAccioRequest({ ...probeRequest, contents: [...probeRequest.contents, { role: 'model', parts: modelParts }, { role: 'user', parts: [{ functionResponse: { ...probeCall, responseJson: JSON.stringify({ result: 'violet-73' }) } }] }] }),
+      provider, model: provider.model, fetch: netFetch, signal: ctrl.signal, write: (c) => { out += c },
+    })
+    text = ''
+    for (const block of out.split('\n\n')) {
+      if (!block.startsWith('data: ') || block.includes('[DONE]')) continue
+      try { for (const p of JSON.parse(block.slice(6)).content?.parts ?? []) if (typeof p.text === 'string' && !p.thought) text += p.text } catch { /* Non-JSON framing is not a result. */ }
+    }
+    validCall = text.trim() === 'violet-73' && result.toolCalls === 0
+  } else if (scope === 'multiturn') validCall = false
+  clearTimeout(timer)
+  if (result.errorCode === 'subscription_sharing_usage_limit_exceeded' && provider.credentialId) {
+    authorizations.pause(provider.credentialId, tx('Requests paused after a ChatGPT usage limit. Manage usage, then explicitly resume.', 'ChatGPT 用量受限后已暂停请求，请管理用量后手动恢复。'))
+    broadcast({ type: 'config' })
+  }
   const stamp = { scope, checkedAt: Date.now(), notSent: result.notSent, protection: netFetch.inspect(provider.baseUrl, { headers: ADAPTERS[provider.kind].headers(provider) }) }
   if (result.status === 'aborted') return { ...stamp, ok: false, latencyMs: Date.now() - started, model: provider.model, message: tr("请求超时（60 秒）；供应商可能已计费") }
-  const passed = scope === 'tools' ? validCall : scope === 'image' ? /\bred\b/i.test(text) : !!text.trim()
+  const passed = toolProbe ? validCall : scope === 'image' ? /\bred\b/i.test(text) : !!text.trim()
   return {
     ...stamp,
     ok: result.status === 'ok' && passed,
     latencyMs: result.ttftMs ?? Date.now() - started,
     model: provider.model,
-    message: result.status !== 'ok' ? (result.error ?? tr("未知错误")) : scope === 'tools' ? validCall ? tr("收到名称和参数正确的工具调用；未执行工具。多轮工具任务仍需在 Accio 验证。") : tr("未收到预期的工具调用，本次检测未通过。") : scope === 'image' ? passed ? tr("正确识别测试图片的红色。复杂图像仍需单独验证。") : tr("未识别出测试图片颜色，本次检测未通过。返回：{0}", text.slice(0, 100)) : text.trim().slice(0, 160) || tr("未返回可见文本，本次检测未通过。"),
+    message: result.status !== 'ok' ? (result.error ?? tr("未知错误")) : scope === 'multiturn' ? validCall ? tx('Tool call → synthetic result → exact final reply passed. No tool was executed.', '工具调用→合成结果→准确最终回复通过，未执行真实工具。') : tx('Tool round trip did not return the expected final result.', '工具多轮续接未返回预期最终结果。') : scope === 'tools' ? validCall ? tr("收到名称和参数正确的工具调用；未执行工具。多轮工具任务仍需在 Accio 验证。") : tr("未收到预期的工具调用，本次检测未通过。") : scope === 'image' ? passed ? tr("正确识别测试图片的红色。复杂图像仍需单独验证。") : tr("未识别出测试图片颜色，本次检测未通过。返回：{0}", text.slice(0, 100)) : text.trim().slice(0, 160) || tr("未返回可见文本，本次检测未通过。"),
   }
   } finally { networkTests-- }
 }
 
 // ---------------------------------------------------------------------------
 // IPC
+
+async function testProvider(input: ProviderInput, scope: TestScope = 'text'): Promise<TestResult> {
+  const submitted = config.draft(input)
+  if (submitted.authMode === 'subscription-key' && submitted.presetId === 'dashscope') return { ok: false, scope, checkedAt: Date.now(), latencyMs: 0, model: submitted.model, notSent: true, message: tx('This plan excludes API test tools. Save the connection and verify with a permitted interactive task in Accio.', '此套餐不允许 API 测试工具。请保存连接，并在 Accio 中通过符合规则的交互任务验证。') }
+  const result = await probeProvider(input, scope)
+  connectionChecks.add(submitted, result)
+  broadcast({ type: 'config' })
+  return result
+}
+
+async function activateWithReview(id: string): Promise<void> {
+  if (id === config.activeProviderId) return
+  const next = id === OFFICIAL_PROVIDER_ID ? undefined : config.provider(id)
+  if (id !== OFFICIAL_PROVIDER_ID && !next) throw new Error(tr('供应商不存在'))
+  if (next?.authMode?.endsWith('-oauth')) {
+    const account = authorizations.views().find((a) => a.id === next.credentialId)
+    if (account?.pauseReason) throw new Error(account.pauseReason)
+    if (!account?.connected || !account.planEnabled) throw new Error(tx('Sign in and enable access before switching.', '请先登录并启用访问权限再切换。'))
+  }
+  const prev = config.provider(config.activeProviderId)
+  const targetWindow = next ? usableModelInfo(next)?.contextWindow : undefined
+  const currentWindow = prev ? usableModelInfo(prev)?.contextWindow : undefined
+  const lines = [
+    next ? `${next.name} · ${next.model}\n${new URL(next.baseUrl).origin}\n${fundingLabel(next)}` : tx('Accio official gateway and account billing', 'Accio 官方网关及账号计费'),
+    tx('Future requests, including the conversation context and tool results Accio sends, go to this destination. In-flight requests continue with their original provider.', '后续请求（包括 Accio 发来的会话上下文和工具结果）将发送到此目标；正在进行的请求仍使用原供应商。'),
+  ]
+  if (next && !targetWindow) lines.push(tx('Target context window is unknown. Check long conversations before continuing.', '目标上下文窗口未知，请先核对长会话是否适用。'))
+  if (targetWindow && currentWindow && targetWindow < currentWindow) lines.push(tx('This model has a smaller context window. Compact or start a new conversation in Accio if needed.', '此模型的上下文窗口更小；必要时请在 Accio 整理或新建会话。'))
+  if (next && !connectionChecks.get(next).some((c) => c.scope === 'multiturn' && c.ok && !checkNeedsReview(c))) lines.push(tx('Tool round-trip compatibility has no passing check from the last 30 days. Review it before continuing a tool-heavy task.', '此连接没有最近 30 天内通过的工具多轮检测，继续工具密集任务前请复核。'))
+  if (prev && next && fundingLabel(prev) !== fundingLabel(next)) lines.push(tx('Billing source changes. Any API charges or subscription overage follow the destination settings.', '计费来源将改变，API 费用或订阅额外用量按目标服务设置执行。'))
+  const result = await dialog.showMessageBox(win!, { type: 'question', title: tx('Switch model connection?', '切换模型连接？'), message: tx('Use this connection for the next request', '下一条请求使用此连接'), detail: lines.join('\n\n'), buttons: [tx('Switch connection', '切换连接'), tr('取消')], defaultId: 1, cancelId: 1, noLink: true })
+  if (result.response !== 0) throw new Error(tx('Switch cancelled. The previous connection remains active.', '已取消切换，仍使用原连接。'))
+  config.setActive(id)
+}
+
+async function automaticBackup(force = false): Promise<AutoBackupStatus> {
+  if (!config.settings.autoBackup) return autoBackupStatus = { state: 'disabled' }
+  if (!force && autoBackupStatus.state === 'error' && Date.now() - (autoBackupStatus.checkedAt ?? 0) < 15 * 60_000) return autoBackupStatus
+  if (busyOperation) return autoBackupStatus
+  autoBackupStatus = { ...autoBackupStatus, state: 'waiting', checkedAt: Date.now(), message: tx('Waiting until Accio is closed.', '等待 Accio 关闭。') }
+  try {
+    if ((await listAccioPids()).length) { broadcast({ type: 'status' }); return autoBackupStatus }
+    await runOperation(tx('Creating automatic backups', '创建自动备份'), async () => {
+      autoBackupStatus = { ...autoBackupStatus, state: 'running' }
+      broadcast({ type: 'status' })
+      const previous = await sessions.listBackups()
+      const ids: string[] = []
+      for (const account of await sessions.listAccounts()) {
+        const last = previous.find((b) => b.accountId === account.id && b.consistency === 'closed')
+        if (!force && last && (Date.now() - last.createdAt < 86_400_000 || account.modifiedAt <= last.createdAt)) continue
+        const backup = await sessions.backup(account.id, 'automatic', undefined, 'closed')
+        ids.push(backup.id)
+        await sessions.pruneAutomatic(account.id, config.settings.backupRetention ?? 7)
+      }
+      autoBackupStatus = { state: 'ok', checkedAt: Date.now(), completedAt: ids.length ? Date.now() : autoBackupStatus.completedAt, lastBackupIds: ids.length ? ids : autoBackupStatus.lastBackupIds, message: ids.length ? tx(`Created ${ids.length} verified backups.`, `已创建 ${ids.length} 份通过校验的备份。`) : tx('No changed accounts are due for a daily backup.', '当前没有需要每日备份的已变更账号。') }
+    })
+  } catch (e) { autoBackupStatus = { ...autoBackupStatus, state: 'error', message: e instanceof Error ? e.message : String(e) } }
+  broadcast({ type: 'status' })
+  return autoBackupStatus
+}
 
 function state(): AppState {
   return {
@@ -312,24 +411,95 @@ function state(): AppState {
       if (view.keyError || !netFetch) return view
       try {
         const p = config.provider(view.id)!
-        return { ...view, protection: netFetch.inspect(p.baseUrl, { headers: ADAPTERS[p.kind].headers(p) }) }
+        return { ...view, connectionFingerprint: connectionFingerprint(p), authorization: authorizations?.views().find((a) => a.id === p.credentialId), checks: connectionChecks?.get(p), protection: netFetch.inspect(p.baseUrl, { headers: ADAPTERS[p.kind].headers(p) }) }
       } catch { return view }
     }),
     activeProviderId: config.activeProviderId,
     settings: config.settings,
     proxy: proxy.status,
-    accio: accioState,
+    accio: { ...accioState, version: accioVersion },
     encryptionAvailable: safeStorage.isEncryptionAvailable(),
     dataDir: app.getPath('userData'),
     configError: config.loadError,
     operationError,
     busyOperation,
+    authorizations: authorizations?.views(),
+    authorizationError: authorizations?.loadError,
+    autoBackup: config.settings.autoBackup ? autoBackupStatus : { state: 'disabled' },
   }
 }
 
 const api: AccioSwitchApi = {
+  providerUsage: async (id) => {
+    const saved = config.provider(id)
+    if (!saved) throw new Error(tr('供应商不存在'))
+    return readProviderUsage(await authorizations.prepare(saved), netFetch)
+  },
+  checkUpdate: () => maintenance.check(),
+  restoreConfigBackup: () => runOperation(tx('Restoring configuration', '恢复配置'), async () => {
+    if (proxy.activeRequests || networkTests || (await listAccioPids()).length) throw new Error(tx('Close Accio and finish requests first.', '请先关闭 Accio 并等待请求结束。'))
+    const pick = await dialog.showOpenDialog(win!, { defaultPath: path.join(dataDirectory, 'updates'), properties: ['openFile'], filters: [{ name: 'Encrypted configuration', extensions: ['enc'] }] })
+    if (pick.canceled || !pick.filePaths[0]) return
+    const file = pick.filePaths[0]
+    if ((await fs.promises.stat(file)).size > 10 * 1024 * 1024) throw new Error('Configuration backup is too large')
+    const backup = JSON.parse(box.decrypt(await fs.promises.readFile(file, 'utf8')))
+    if (backup.version !== app.getVersion() || typeof backup.config !== 'string' || backup.credentialVaultExcluded !== true) throw new Error(tx('Open the app version that created this configuration backup before restoring it.', '请使用生成此配置备份的应用版本进行恢复。'))
+    const confirm = await dialog.showMessageBox(win!, { type: 'question', message: tx('Restore these connection profiles and settings?', '恢复此备份中的连接和设置？'), detail: tx('The current configuration will be preserved. Selection returns to Accio official; automatic startup and backups are disabled until you review them. OAuth tokens are unchanged.', '会保留当前配置副本，恢复后切回 Accio 官方，并关闭自动启动和自动备份以待核对。OAuth 令牌保持现状。'), buttons: [tx('Restore configuration', '恢复配置'), tr('取消')], defaultId: 1, cancelId: 1 })
+    if (confirm.response !== 0) return
+    config.restoreSnapshot(backup.config)
+    await applyNetworkProxy(); await startProxy(); broadcast({ type: 'config' })
+  }),
+  downloadUpdate: (name) => runOperation(tx('Downloading update', '下载更新'), () => maintenance.download(name)),
+  installUpdate: () => runOperation(tx('Starting update', '启动更新'), async () => {
+    if (proxy.activeRequests || networkTests || (await listAccioPids()).length) throw new Error(tx('Close Accio and finish active requests before installing.', '安装前请先关闭 Accio 并等待请求完成。'))
+    const installer = await maintenance.verifiedInstallPath()
+    const result = await dialog.showMessageBox(win!, { type: 'question', message: tx('Open the verified update and quit Accio BYOK?', '打开已校验更新并退出 Accio BYOK？'), detail: tx('An encrypted configuration backup has been saved in the updates folder. Keep the previous executable. To roll back, use that version and restore its matching backup. OAuth credentials are excluded and must never be restored from an old token snapshot.', '已在 updates 目录保存加密配置备份，请保留原版本程序。回退时使用原版本及其对应配置备份；OAuth 凭据不在备份中，不可恢复旧令牌快照。'), buttons: [tx('Open update', '打开更新'), tr('取消')], defaultId: 1, cancelId: 1 })
+    if (result.response !== 0) return
+    const error = await shell.openPath(installer)
+    if (error) throw new Error(error)
+    quitting = true; app.quit()
+  }),
+  diagnosticPreview: async (includeContent = false) => {
+    if (typeof includeContent !== 'boolean') throw new Error('Invalid diagnostic option')
+    const recent = logs.recent(50)
+    const captures = includeContent ? recent.map((l) => logs.capture(l.id)).filter((v): v is NonNullable<typeof v> => !!v).slice(0, 3) : undefined
+    diagnostics = diagnosticPreview(app.getVersion(), { proxyRunning: proxy.status.running, accioRunning: accioState.running, accioVersion, providerCount: config.providerViews().length }, recent, captures, (s) => {
+      s = authorizations.redact(s)
+      for (const view of config.providerViews()) { const p = config.provider(view.id); if (p) for (const secret of [p.apiKey, ...Object.values(p.extraHeaders ?? {})]) if (secret) s = s.split(secret).join('[REDACTED]') }
+      return s
+    })
+    return diagnostics
+  },
+  exportDiagnostic: async (id) => {
+    if (!diagnostics || diagnostics.id !== id) throw new Error('Preview the diagnostic report again before exporting')
+    const snapshot = diagnostics
+    const save = await dialog.showSaveDialog(win!, { defaultPath: `Accio-BYOK-diagnostic-${new Date().toISOString().slice(0, 10)}.json`, filters: [{ name: 'JSON', extensions: ['json'] }] })
+    if (save.canceled || !save.filePath) return undefined
+    await fs.promises.writeFile(save.filePath, snapshot.content, 'utf8')
+    return save.filePath
+  },
+  signIn: async (service, existingId) => {
+    config.assertWritable()
+    const result = await authorizations.signIn(service, (url) => shell.openExternal(url), existingId)
+    modelLists.clear()
+    broadcast({ type: 'config' })
+    return result
+  },
+  cancelSignIn: async () => authorizations.cancel(),
+  resumeAuthorization: async (id) => { authorizations.resume(id); broadcast({ type: 'config' }) },
+  signOut: (id) => runOperation('Signing out', async () => {
+    if (proxy.activeRequests || networkTests) throw new Error('Wait for active requests and checks to finish before signing out')
+    const result = await authorizations.signOut(id)
+    modelLists.clear()
+    broadcast({ type: 'config' })
+    return result
+  }),
   getState: async () => state(),
-  saveProvider: (input, activate) => runOperation(tr("保存供应商"), () => config.saveProvider(input, activate)),
+  saveProvider: (input, activate) => runOperation(tr("保存供应商"), async () => {
+    const saved = config.saveProvider(input)
+    if (activate) await activateWithReview(saved.id)
+    return saved
+  }),
   recoverConfig: (action) => runOperation(tr("恢复配置"), async () => {
     config.recover(action)
     await applyNetworkProxy()
@@ -339,18 +509,18 @@ const api: AccioSwitchApi = {
   }),
   deleteProvider: (id) => runOperation(tr("删除供应商"), () => config.deleteProvider(id)),
   duplicateProvider: (id) => runOperation(tr("复制供应商"), () => config.duplicateProvider(id)),
-  activateProvider: (id) => runOperation(tr("切换供应商"), () => config.setActive(id)),
+  activateProvider: (id) => runOperation(tr("切换供应商"), () => activateWithReview(id)),
   reorderProviders: (ids) => runOperation(tr("调整供应商顺序"), () => config.reorder(ids)),
   testProvider,
   listProviderModels: async (input, refresh) => {
     if (busyOperation) throw new Error(tr("正在{0}，请稍后读取模型列表", busyOperation))
-    const p = config.draft(input)
+    const p = await authorizations.prepare(config.draft(input))
     networkTests++
     try { return await modelLists.list(p, netFetch, refresh) } catch (e) { throw new Error(redactProviderError(e instanceof Error ? e.message : String(e), p)) } finally { networkTests-- }
   },
   providerModelInfo: async (input) => {
     if (busyOperation) throw new Error(tr("正在{0}，请稍后读取模型信息", busyOperation))
-    const p = config.draft(input)
+    const p = await authorizations.prepare(config.draft(input))
     if (!p.model) throw new Error(tr("请先选择模型"))
     networkTests++
     try { return await modelLists.describe(p, netFetch) } catch (e) { throw new Error(redactProviderError(e instanceof Error ? e.message : String(e), p)) } finally { networkTests-- }
@@ -404,6 +574,7 @@ const api: AccioSwitchApi = {
     const r = await dialog.showOpenDialog(win!, { title: tr("选择 Accio.exe"), filters: [{ name: 'Accio', extensions: ['exe'] }], properties: ['openFile'] })
     if (r.canceled || !r.filePaths[0]) return undefined
     await runOperation(tr("更新 Accio 位置"), () => config.updateSettings({ accioExePath: r.filePaths[0] }))
+    accioVersion = await readAccioVersion(r.filePaths[0])
     await refreshAccio()
     return r.filePaths[0]
   },
@@ -428,7 +599,9 @@ const api: AccioSwitchApi = {
   clearLogs: () => logs.clear(),
   listAccounts: () => sessions.listAccounts(),
   listBackups: () => sessions.listBackups(),
-  createBackup: (accountId, note) => runOperation(tr("备份会话"), () => sessions.backup(accountId, 'manual', note)),
+  previewBackup: (id, target) => sessions.preview(id, target),
+  runAutoBackup: () => automaticBackup(true),
+  createBackup: (accountId, note) => runOperation(tr("备份会话"), async () => sessions.backup(accountId, 'manual', note, (await listAccioPids()).length ? 'live' : 'closed')),
   restoreBackup: (id) => runOperation(tr("恢复会话"), async () => {
     if ((await listAccioPids()).length) throw new Error(tr("请先关闭 Accio 再恢复备份"))
     return sessions.restore(id)
@@ -631,12 +804,24 @@ app.whenReady().then(async () => {
     return netSession.fetch(url, init as RequestInit)
   }, Date.now, () => broadcast({ type: 'status' }))
   try { await applyNetworkProxy() } catch (e) { operationError = tr("出站网络设置未能应用：{0}", e instanceof Error ? e.message : String(e)) }
+  authorizations = new AuthorizationStore(path.join(userData, 'authorization.enc'), box, netFetch)
+  maintenance = new Maintenance(userData, app.getVersion(), (url, init) => netSession.fetch(url, { ...init, credentials: 'omit' } as RequestInit), box)
+  void readAccioVersion(findAccioExe(config.settings.accioExePath)).then((v) => { accioVersion = v; broadcast({ type: 'status' }) })
+  connectionChecks = new ConnectionChecks(path.join(userData, 'connection-checks.json'))
 
   proxy = new ProxyServer({
     resolveTarget: () => config.resolveTarget(),
+    prepareProvider: (p) => authorizations.prepare(p),
     upstream: () => config.settings.upstreamGateway,
     fetch: (url, init) => netFetch(url, init),
     onLog: (entry, capture, pricing) => {
+      if (entry.errorCode === 'subscription_sharing_usage_limit_exceeded') {
+        const p = config.provider(entry.providerId)
+        if (p?.authMode === 'openai-oauth' && p.credentialId) {
+          try { authorizations.pause(p.credentialId, tx('Requests paused after a ChatGPT usage limit. Manage usage, then explicitly resume.', 'ChatGPT 用量受限后已暂停请求，请管理用量后手动恢复。')); broadcast({ type: 'config' }) }
+          catch (e) { operationError = String(e); broadcast({ type: 'status' }) }
+        }
+      }
       if (!config.settings.debugCapture) capture = undefined
       const log = logs.add(entry, pricing, capture)
       if (log.mode === 'byok' && log.status === 'error') notifyFailure(log.providerId, log.providerName, log.error ?? '', log.id)
@@ -665,6 +850,8 @@ app.whenReady().then(async () => {
   }
   await refreshAccio().catch((e) => { operationError = String(e) })
   setInterval(() => void refreshAccio().catch((e) => { operationError = String(e); broadcast({ type: 'status' }) }), 4000)
+  setInterval(() => void automaticBackup(), 60_000)
+  if (config.settings.autoBackup) void automaticBackup()
 
   createTray()
   const hidden = process.argv.includes('--hidden') || process.argv.includes('--launch-accio')

@@ -51,6 +51,8 @@ export interface ByokResult {
   error?: string
   httpStatus?: number
   notSent?: boolean
+  errorCode?: string
+  requestId?: string
 }
 
 /** Run one BYOK turn and stream it to Accio as ADK frames. Never throws. */
@@ -62,6 +64,8 @@ export async function streamByok(opts: ByokOptions): Promise<ByokResult> {
   let finish: string | undefined
   let ttftMs: number | undefined
   let hasText = false
+  let requestId: string | undefined
+  let sent = false
   const controller = new AbortController()
   const cancel = () => controller.abort(opts.signal.reason)
   opts.signal.addEventListener('abort', cancel, { once: true })
@@ -99,6 +103,8 @@ export async function streamByok(opts: ByokOptions): Promise<ByokResult> {
       fetch: async (url, init) => {
         arm(opts.headerTimeoutMs ?? 60_000, tr("等待供应商响应"))
         const response = await opts.fetch(url, { ...init, signal: controller.signal })
+        sent = true
+        requestId = response.headers.get('x-request-id') ?? response.headers.get('request-id') ?? undefined
         progress()
         return response
       },
@@ -134,7 +140,7 @@ export async function streamByok(opts: ByokOptions): Promise<ByokResult> {
     if (!hasText && !calls.length) throw new Error(tr("模型未返回可用的正文或工具调用（{0}）；本轮为空结果，未自动重试，供应商可能已计费", finish ?? tr("未知结束原因")))
     emit(finalFrame(calls, reason, usage))
     opts.write('data: [DONE]\n\n')
-    return { status: 'ok', usage, toolCalls: calls.length, finishReason: reason, ttftMs }
+    return { status: 'ok', usage, toolCalls: calls.length, finishReason: reason, ttftMs, requestId }
   } catch (err) {
     if (opts.signal.aborted) {
       return { status: 'aborted', usage, toolCalls: 0, finishReason: finish, ttftMs, error: tr("客户端已取消") }
@@ -152,7 +158,8 @@ export async function streamByok(opts: ByokOptions): Promise<ByokResult> {
     } catch {
       /* client already gone */
     }
-    return { status: 'error', usage, toolCalls: 0, finishReason: finish, ttftMs, error: friendly, httpStatus: status, notSent: (err as { notSent?: boolean })?.notSent === true }
+    const code = (err as { code?: string }).code
+    return { status: 'error', usage, toolCalls: 0, finishReason: finish, ttftMs, error: friendly, httpStatus: status, notSent: (err as { notSent?: boolean })?.notSent === true || (!sent && !timer), errorCode: typeof code === 'string' && /^[a-zA-Z0-9_.-]{1,128}$/.test(code) ? code : undefined, requestId: requestId ? redactProviderError(requestId.slice(0, 200), opts.provider) : undefined }
   } finally {
     clearTimeout(timer)
     opts.signal.removeEventListener('abort', cancel)

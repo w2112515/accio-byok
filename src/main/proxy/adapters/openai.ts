@@ -277,7 +277,8 @@ async function listModels(provider: Provider, fetch: FetchLike, signal?: AbortSi
     await fetch(providerUrl(provider, 'models'), { headers: openaiHeaders(provider), signal }),
     provider.name,
   )
-  const j = (await res.json()) as { data?: { id?: string }[]; models?: { id?: string; name?: string }[] }
+  const j = (await res.json()) as { data?: { id?: string }[]; models?: { id?: string; name?: string; slug?: string; visibility?: string }[] }
+  if (provider.authMode === 'openai-oauth') return (j.models ?? []).filter((m) => m.visibility === 'list' && m.slug).map((m) => m.slug!)
   const list = j.data ?? j.models ?? []
   return list.map((m) => m.id ?? (m as { name?: string }).name ?? '').filter(Boolean).sort()
 }

@@ -53,6 +53,25 @@ before(() => {
 after(() => fs.rmSync(root, { recursive: true, force: true }))
 
 describe('session manager', () => {
+  it('rejects same-length content tampering and retains manual snapshots during automatic cleanup', async () => {
+    const backup = await mgr.backup(OLD, 'automatic', undefined, 'closed')
+    const preview = await mgr.preview(backup.id)
+    assert.equal(preview.integrity, 'sha256')
+    assert.equal(preview.consistency, 'closed')
+    const file = path.join(backup.path, 'data', 'settings-local.json')
+    const original = fs.readFileSync(file, 'utf8')
+    fs.writeFileSync(file, original.replace('not', 'bad'))
+    await assert.rejects(mgr.preview(backup.id), /SHA-256/)
+    await assert.rejects(mgr.restore(backup.id), /SHA-256/)
+    fs.writeFileSync(file, original)
+    const manual = await mgr.backup(OLD, 'manual')
+    const latest = await mgr.backup(OLD, 'automatic', undefined, 'closed')
+    await mgr.pruneAutomatic(OLD, 1)
+    const list = await mgr.listBackups()
+    assert.ok(list.some((b) => b.id === manual.id))
+    assert.ok(list.some((b) => b.id === latest.id))
+    assert.ok(!list.some((b) => b.id === backup.id))
+  })
   it('rewrites identifiers and account path segments without replacing prose account numbers', () => {
     const rw = makeRewriter(OLD, NEW)
     assert.equal(rw(OLD_CID), NEW_CID)

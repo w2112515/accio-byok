@@ -1,5 +1,6 @@
-import { tr } from './i18n.ts'
+import { tr, tx } from './i18n.ts'
 import type { ProviderInput, ProviderKind } from './types.ts'
+import { subscriptionRoute } from './provider-access.ts'
 
 export function validateUpstreamGateway(value: string, allowLegacyHttp = false): URL {
   let url: URL
@@ -35,6 +36,9 @@ export function inferProviderKind(value: string): ProviderKind | undefined {
 }
 
 export function normalizeProviderInput(input: ProviderInput, requireModel = false): ProviderInput {
+  // Views and evidence are outputs, never configuration accepted back over IPC.
+  const fields = new Set(['id', 'name', 'kind', 'openaiApi', 'allowInsecureHttp', 'presetId', 'authMode', 'credentialId', 'fundingSource', 'subscriptionAcknowledged', 'fallbackEligible', 'baseUrl', 'apiKey', 'model', 'modelOverrides', 'maxOutputTokens', 'sendReasoningEffort', 'sendReasoningContent', 'thinking', 'thinkingBudget', 'promptCaching', 'sendSampling', 'extraHeaders', 'pricing', 'pricingModel', 'pricingUpdatedAt', 'modelInfo', 'note'])
+  input = Object.fromEntries(Object.entries(input).filter(([key]) => fields.has(key))) as ProviderInput
   if (!['openai', 'anthropic', 'gemini'].includes(input.kind)) throw new Error(tr("请选择有效的接口类型"))
   const baseUrl = normalizeBaseUrl(input.kind, input.baseUrl)
   const url = new URL(baseUrl)
@@ -44,6 +48,17 @@ export function normalizeProviderInput(input: ProviderInput, requireModel = fals
   const endpoint = new URL(input.baseUrl).pathname
   const openaiApi = input.kind === 'openai' && /\/responses\/?$/.test(endpoint) ? 'responses' : input.kind === 'openai' && /\/chat\/completions\/?$/.test(endpoint) ? 'chat' : input.openaiApi
   const model = input.model.trim()
+  const authMode = input.authMode ?? 'api-key'
+  if (!['api-key', 'subscription-key', 'openai-oauth', 'openrouter-oauth', 'none'].includes(authMode)) throw new Error(tx("Invalid authentication method", "认证方式无效"))
+  if (input.fundingSource && !['api', 'subscription', 'local'].includes(input.fundingSource)) throw new Error(tx("Invalid billing source", "计费来源无效"))
+  if (authMode === 'none' && !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)) throw new Error(tx("The local no-key mode requires a loopback endpoint", "本地无 Key 模式只允许本机回环地址"))
+  if (authMode.endsWith('-oauth')) {
+    const expected = authMode === 'openai-oauth' ? 'https://api.openai.com/v1' : 'https://openrouter.ai/api/v1'
+    if (input.kind !== 'openai' || baseUrl !== expected || Object.keys(input.extraHeaders ?? {}).length || (authMode === 'openai-oauth' && openaiApi !== 'responses')) throw new Error(tx("OAuth credentials require the official endpoint and cannot use custom headers or another protocol", "OAuth 凭据必须使用官方地址，不能使用自定义请求头或其他协议"))
+    if (!input.credentialId) throw new Error(tx("Complete sign-in before saving or testing this connection", "保存或测试此连接前请先完成登录"))
+  }
+  if (authMode === 'subscription-key' && input.subscriptionAcknowledged !== true) throw new Error(tx("Confirm that your planned use is permitted by this subscription before sending requests", "发送请求前，请确认使用场景符合该订阅的规则"))
+  if (authMode === 'subscription-key' && (!subscriptionRoute({ ...input, baseUrl }) || input.kind !== 'openai' || openaiApi === 'responses' || Object.keys(input.extraHeaders ?? {}).length)) throw new Error(tx("Subscription keys require a supported official subscription endpoint, Chat Completions and no custom headers", "订阅 Key 需使用支持的官方订阅地址及 Chat Completions 协议，不允许自定义请求头"))
   if (requireModel && !model) throw new Error(tr("请填写或选择默认模型"))
   for (const [label, value, min] of [
     [tr("最大输出 Token"), input.maxOutputTokens, 1],
@@ -68,6 +83,8 @@ export function normalizeProviderInput(input: ProviderInput, requireModel = fals
   }
   return {
     ...input, baseUrl, openaiApi, model, name: input.name.trim(), apiKey: input.apiKey?.trim(),
+    authMode,
+    fundingSource: authMode === 'openai-oauth' || authMode === 'subscription-key' ? 'subscription' : authMode === 'none' ? 'local' : 'api',
     modelOverrides: Object.fromEntries(Object.entries(input.modelOverrides ?? {}).filter(([k, v]) => k.trim() && v.trim()).map(([k, v]) => [k.trim(), v.trim()])),
   }
 }

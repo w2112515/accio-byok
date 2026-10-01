@@ -10,6 +10,29 @@ const box: SecretBox = { available: () => true, encrypt: (s) => `test:${s}`, dec
   return s.slice(5)
 } }
 
+it('restores a readable configuration safely and preserves the current file on invalid recovery', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'asw-config-restore-'))
+  const file = path.join(root, 'config.json')
+  try {
+    const store = new ConfigStore(file, box)
+    const saved = store.saveProvider({ name: 'Original', kind: 'openai', baseUrl: 'https://api.example.com/v1', apiKey: 'original-key', model: 'm', modelOverrides: {} }, true)
+    store.updateSettings({ autoBackup: true, launchAccioOnStart: true })
+    const snapshot = fs.readFileSync(file, 'utf8')
+    store.saveProvider({ ...saved, apiKey: 'replacement-key', name: 'Changed' })
+    const current = fs.readFileSync(file, 'utf8')
+    assert.throws(() => store.restoreSnapshot('{broken'))
+    assert.equal(fs.readFileSync(file, 'utf8'), current)
+    store.restoreSnapshot(snapshot)
+    assert.equal(store.activeProviderId, 'official')
+    assert.equal(store.settings.autoBackup, false)
+    assert.equal(store.settings.launchAccioOnStart, false)
+    assert.equal(store.provider(saved.id)?.apiKey, 'original-key')
+    const protection = fs.readdirSync(root).find((name) => name.includes('.before-restore-'))!
+    assert.equal(fs.readFileSync(path.join(root, protection), 'utf8'), current)
+    assert.equal(new ConfigStore(file, box).provider(saved.id)?.name, 'Original')
+  } finally { fs.rmSync(root, { recursive: true, force: true }) }
+})
+
 it('migrates legacy extra headers into encrypted storage and preserves them across edits', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'asw-headers-'))
   const file = path.join(root, 'config.json')

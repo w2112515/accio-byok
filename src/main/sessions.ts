@@ -1,8 +1,9 @@
-import { tr } from '../shared/i18n.ts'
+import { tr, tx } from '../shared/i18n.ts'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
-import type { AccioAccount, BackupInfo, MigrationReport } from '../shared/types.ts'
+import { createHash } from 'node:crypto'
+import type { AccioAccount, BackupInfo, BackupPreview, MigrationReport } from '../shared/types.ts'
 
 // node:sqlite ships with Electron's Node 24; loaded lazily so the module can be imported anywhere.
 type Sqlite = typeof import('node:sqlite')
@@ -33,6 +34,43 @@ interface Manifest {
   conversations: number
   reason: BackupInfo['reason']
   note?: string
+  consistency?: BackupInfo['consistency']
+  integrity?: BackupInfo['integrity']
+  hashes?: Record<string, { size: number; sha256: string }>
+}
+
+async function hashTree(dir: string): Promise<NonNullable<Manifest['hashes']>> {
+  const hashes: NonNullable<Manifest['hashes']> = {}
+  await walk(dir, async (file, stat) => {
+    const hash = createHash('sha256')
+    for await (const chunk of fs.createReadStream(file)) hash.update(chunk as Buffer)
+    hashes[path.relative(dir, file).split(path.sep).join('/')] = { size: stat.size, sha256: hash.digest('hex') }
+  })
+  return hashes
+}
+
+async function checkDatabases(dir: string): Promise<number> {
+  const { DatabaseSync } = await loadSqlite()
+  let count = 0
+  await walk(dir, (file) => {
+    if (!SQLITE_EXT.has(path.extname(file).toLowerCase())) return
+    const db = new DatabaseSync(file, { readOnly: true })
+    try {
+      const result = db.prepare('PRAGMA quick_check').all()
+      if (result.length !== 1 || Object.values(result[0])[0] !== 'ok') throw new Error(tx('Database integrity check failed: ', '数据库完整性检查失败：') + path.basename(file))
+      count++
+    } finally { db.close() }
+  })
+  return count
+}
+
+async function verifyStaged(dir: string, manifest: Manifest, only?: string[]): Promise<void> {
+  if (manifest.hashes) {
+    const expected = Object.fromEntries(Object.entries(manifest.hashes).filter(([file]) => !only || only.some((root) => file === root || file.startsWith(`${root}/`))))
+    const actual = await hashTree(dir)
+    if (Object.keys(actual).length !== Object.keys(expected).length || Object.entries(actual).some(([file, h]) => expected[file]?.sha256 !== h.sha256 || expected[file]?.size !== h.size)) throw new Error(tx('Copied backup failed its SHA-256 check. No account data was changed.', '备份副本 SHA-256 校验失败，未改动账号数据。'))
+  }
+  await checkDatabases(dir)
 }
 
 async function exists(p: string): Promise<boolean> {
@@ -90,7 +128,7 @@ async function countAgents(accountDir: string): Promise<number> {
 }
 
 /** Copy a directory; SQLite databases go through the online backup API so they are consistent. */
-async function copyTree(src: string, dst: string, only?: string[]): Promise<{ files: number; size: number }> {
+async function copyTree(src: string, dst: string, only?: string[], immutable = false): Promise<{ files: number; size: number }> {
   const { backup, DatabaseSync } = await loadSqlite()
   let files = 0
   let size = 0
@@ -110,7 +148,7 @@ async function copyTree(src: string, dst: string, only?: string[]): Promise<{ fi
       if (SQLITE_SIDECAR.test(file)) return
       const target = path.join(dst, path.relative(src, file))
       await fsp.mkdir(path.dirname(target), { recursive: true })
-      if (SQLITE_EXT.has(path.extname(file))) {
+      if (!immutable && SQLITE_EXT.has(path.extname(file).toLowerCase())) {
         const db = new DatabaseSync(file, { readOnly: true })
         try {
           await backup(db, target)
@@ -188,7 +226,8 @@ export class SessionManager {
         const dir = path.join(this.paths.backupDir, acc, stamp)
         try {
           const m = JSON.parse(await fsp.readFile(path.join(dir, 'manifest.json'), 'utf8')) as Manifest
-          out.push({ id: `${acc}__${stamp}`, path: dir, ...m })
+          const { hashes: _hashes, ...info } = m
+          out.push({ id: `${acc}__${stamp}`, path: dir, ...info, integrity: m.hashes ? 'sha256' : 'legacy' })
         } catch {
           /* incomplete backup */
         }
@@ -217,20 +256,34 @@ export class SessionManager {
     if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(tr("备份数据目录无效"))
     const actual = await dirStats(data)
     if (actual.files !== manifest.fileCount) throw new Error(tr("备份文件缺失或数量不符，已停止操作，当前会话未改动"))
+    if (manifest.hashes) {
+      const hashes = await hashTree(data)
+      if (Object.keys(hashes).length !== Object.keys(manifest.hashes).length || Object.entries(hashes).some(([file, hash]) => manifest.hashes![file]?.sha256 !== hash.sha256 || manifest.hashes![file]?.size !== hash.size)) throw new Error(tx('Backup content does not match its SHA-256 manifest. No account data was changed.', '备份内容与 SHA-256 清单不一致，未改动账号数据。'))
+    }
+    await checkDatabases(data)
     return { dir, manifest }
   }
 
-  async backup(accountId: string, reason: BackupInfo['reason'] = 'manual', note?: string): Promise<BackupInfo> {
+  async backup(accountId: string, reason: BackupInfo['reason'] = 'manual', note?: string, consistency: 'closed' | 'live' = 'live'): Promise<BackupInfo> {
+    if (consistency === 'closed') await this.paths.beforeWrite?.()
     const src = this.accountDir(accountId)
     if (!(await exists(src))) throw new Error(tr("账号目录不存在：{0}", accountId))
     const sourceStat = await fsp.lstat(src)
     if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) throw new Error(tr("账号目录无效或为符号链接"))
     const createdAt = Date.now()
     const stamp = `${new Date(createdAt).toISOString().replace(/[:.]/g, '-')}-${crypto.randomUUID().slice(0, 8)}`
-    const dir = path.join(this.paths.backupDir, accountId, stamp)
+    const dir = this.backupDir(`${accountId}__${stamp}`)
     const data = path.join(dir, 'data')
-    await fsp.mkdir(data, { recursive: true })
-    const { files, size } = await copyTree(src, data)
+    await fsp.mkdir(path.dirname(dir), { recursive: true })
+    await fsp.mkdir(dir)
+    try {
+    await fsp.mkdir(data)
+    await copyTree(src, data)
+    const hashes = await hashTree(data)
+    await checkDatabases(data)
+    if (consistency === 'closed') await this.paths.beforeWrite?.()
+    const files = Object.keys(hashes).length
+    const size = Object.values(hashes).reduce((n, h) => n + h.size, 0)
     const manifest: Manifest = {
       accountId,
       createdAt,
@@ -239,9 +292,48 @@ export class SessionManager {
       conversations: await countConversations(data),
       reason,
       note,
+      hashes, consistency, integrity: 'sha256',
     }
     await fsp.writeFile(path.join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2))
-    return { id: `${accountId}__${stamp}`, path: dir, ...manifest }
+    const { hashes: _hashes, ...info } = manifest
+    return { id: `${accountId}__${stamp}`, path: dir, ...info }
+    } catch (error) {
+      // Only this newly reserved, validated snapshot can be removed; never touch account data.
+      try { await fsp.rm(dir, { recursive: true, force: true }) }
+      catch (cleanup) { throw new Error(`${String(error)}; ${tx('Incomplete backup cleanup failed', '清理未完成备份失败')}: ${String(cleanup)}`) }
+      throw error
+    }
+  }
+
+  /** Automatic retention never deletes manual or recovery-protection snapshots. */
+  async pruneAutomatic(accountId: string, keep: number): Promise<void> {
+    if (!Number.isInteger(keep) || keep < 1 || keep > 30) throw new Error('Invalid automatic backup retention')
+    const list = (await this.listBackups()).filter((b) => b.accountId === accountId && b.reason === 'automatic' && b.consistency === 'closed')
+    for (const b of list.slice(keep)) await this.deleteBackup(b.id)
+  }
+
+  async preview(id: string, targetAccountId?: string): Promise<BackupPreview> {
+    const { dir, manifest } = await this.checkedBackup(id)
+    const targetId = targetAccountId || manifest.accountId
+    const target = this.accountDir(targetId)
+    const preview: BackupPreview = { id, sourceAccountId: manifest.accountId, targetAccountId: targetId, files: manifest.fileCount, sizeBytes: manifest.sizeBytes, integrity: manifest.hashes ? 'sha256' : 'legacy', consistency: manifest.consistency ?? 'unknown', databasesChecked: await checkDatabases(path.join(dir, 'data')), filesRewritten: 0, pathsRenamed: 0, existingFiles: 0, warnings: [] }
+    if (!manifest.hashes) preview.warnings.push(tx('Legacy backup: no content hashes are available. Only file count and database checks can be verified.', '旧备份没有内容校验值，只能核对文件数和数据库完整性。'))
+    if (manifest.consistency !== 'closed') preview.warnings.push(tx('This backup was not confirmed with Accio closed; cross-file consistency is not guaranteed.', '此备份未确认在 Accio 关闭时生成，无法保证跨文件一致性。'))
+    if (targetId === manifest.accountId) return preview
+    if (!(await exists(target))) throw new Error(tr('目标账号目录不存在，请先在 Accio 中登录该账号'))
+    const root = path.join(this.paths.backupDir, '_preview')
+    await fsp.mkdir(root, { recursive: true })
+    const stage = await fsp.mkdtemp(path.join(root, 'migration-'))
+    const report: MigrationReport = { sourceAccountId: manifest.accountId, targetAccountId: targetId, safetyBackupId: '', filesCopied: 0, filesSkipped: 0, filesRewritten: 0, pathsRenamed: 0, sqliteRowsMerged: 0, warnings: [] }
+    try {
+      await copyTree(path.join(dir, 'data'), stage, MIGRATE_ITEMS, true)
+      await verifyStaged(stage, manifest, MIGRATE_ITEMS)
+      await rewriteTree(stage, makeRewriter(manifest.accountId, targetId), report)
+      await walk(stage, async (file) => { if (await exists(path.join(target, path.relative(stage, file)))) preview.existingFiles++ })
+      preview.filesRewritten = report.filesRewritten; preview.pathsRenamed = report.pathsRenamed
+      preview.warnings.push(tx('Existing files remain; compatible database rows are merged. Final conflicts are checked again at write time.', '保留已有文件，兼容的数据库行会合并；写入时再次检查冲突。'))
+    } finally { await fsp.rm(stage, { recursive: true, force: true }) }
+    return preview
   }
 
   async deleteBackup(id: string): Promise<void> {
@@ -258,11 +350,12 @@ export class SessionManager {
     let safetyBackupId = ''
     let moved = false
     try {
-      const copied = await copyTree(path.join(dir, 'data'), stage)
+      const copied = await copyTree(path.join(dir, 'data'), stage, undefined, true)
       if (copied.files !== manifest.fileCount) throw new Error(tr("备份未完整复制，已停止恢复"))
+      await verifyStaged(stage, manifest)
       await this.paths.beforeWrite?.()
       if (await exists(target)) {
-        safetyBackupId = (await this.backup(manifest.accountId, 'before-restore', tr("恢复 {0} 之前自动创建", id))).id
+        safetyBackupId = (await this.backup(manifest.accountId, 'before-restore', tr("恢复 {0} 之前自动创建", id), 'closed')).id
         await this.paths.beforeWrite?.()
         await fsp.rename(target, rollback)
         moved = true
@@ -297,7 +390,7 @@ export class SessionManager {
     const report: MigrationReport = {
       sourceAccountId: oldId,
       targetAccountId: newId,
-      safetyBackupId: (await this.backup(newId, 'before-migrate', tr("迁移 {0} 的会话之前自动创建", oldId))).id,
+      safetyBackupId: (await this.backup(newId, 'before-migrate', tr("迁移 {0} 的会话之前自动创建", oldId), 'closed')).id,
       filesCopied: 0,
       filesSkipped: 0,
       filesRewritten: 0,
@@ -308,7 +401,8 @@ export class SessionManager {
 
     const staging = path.join(this.paths.backupDir, '_staging', crypto.randomUUID())
     try {
-      await copyTree(src, staging, MIGRATE_ITEMS)
+      await copyTree(src, staging, MIGRATE_ITEMS, true)
+      await verifyStaged(staging, manifest, MIGRATE_ITEMS)
       const rewrite = makeRewriter(oldId, newId)
       await rewriteTree(staging, rewrite, report)
       await this.paths.beforeWrite?.()

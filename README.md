@@ -6,13 +6,13 @@
 
 > An independent community tool. Not affiliated with Alibaba or Accio. It does not register accounts, rotate accounts, or bypass quotas.
 
-**1.3.0 public preview · Windows x64** — [Downloads and release notes](https://github.com/w2112515/accio-byok/releases/tag/v1.3.0). The app defaults to English and also supports Simplified Chinese. Change **Language / 语言** in the top bar or Settings; your choice is saved for the next launch.
+**1.4.1 local validation build · Windows x64.** This source includes the features below; 1.4.1 has not been published. The [published preview remains 1.3.0](https://github.com/w2112515/accio-byok/releases/tag/v1.3.0). The app defaults to English and also supports Simplified Chinese. Change **Language / 语言** in the top bar or Settings; your choice is saved for the next launch.
 
 ## Download and get started
 
 1. Download the [Windows installer](https://github.com/w2112515/accio-byok/releases/download/v1.3.0/Accio-BYOK-Setup-1.3.0.exe) or [portable app](https://github.com/w2112515/accio-byok/releases/download/v1.3.0/Accio-BYOK-1.3.0-portable.exe). [SHA-256 checksums](https://github.com/w2112515/accio-byok/releases/download/v1.3.0/SHA256SUMS.txt) are provided. If an older version is running, quit it from the system tray first.
 2. Open **Providers → Add provider**, choose a connection type, and enter your API key. You can paste a base URL or a full Chat Completions, Responses, Anthropic Messages, or Gemini endpoint. The app normalizes the URL when you leave the field, preserving deployment subpaths.
-3. Select a model and choose **Test & enable**. The connection is saved and selected only after the test succeeds. **Save only** does not switch providers. Tests request up to 1,024 output tokens and may incur charges; their costs are excluded from Accio usage statistics.
+3. Select a model and choose **Test & enable**. After a successful check the connection is saved; review the destination, billing and compatibility before switching. **Save only** does not switch providers. Checks consume usage and are excluded from Accio totals. A tool round trip makes up to two requests. ChatGPT plan requests use server output limits; other checks request up to 1,024 output tokens. Bailian subscription plans exclude API test tools: save and verify through a permitted interactive task in Accio instead.
 4. Choose **Start Accio**. If Accio is already running, connecting requires a confirmed restart and interrupts active tasks. A successful launch only confirms that the process started.
 5. Send a message in Accio, then check **Overview** or **Usage & diagnostics** for the actual model and result. Switch providers from the top bar or tray; the next request uses your selection.
 
@@ -36,6 +36,8 @@ The interface was inspired by [cc-switch](https://github.com/farion1231/cc-switc
 
 ## Features
 
+Version 1.4 adds saved official authorizations, separate subscription-key channels, connection-specific capability evidence, manual fallback candidates, context warnings, provider usage lookups, verified automatic session backups, recovery previews, and update/diagnostic controls. Existing navigation and provider presets remain in place. Real provider sign-in and paid inference have not yet been verified; local fixtures do not establish account eligibility or vendor compatibility.
+
 | Area | Support |
 |---|---|
 | Providers | 18 visible presets: official APIs, Chinese providers, aggregators, local models, CPA / CLIProxyAPI, Sub2API, Grok2API, New API, and generic gateways |
@@ -50,9 +52,36 @@ The interface was inspired by [cc-switch](https://github.com/farion1231/cc-switc
 | Recovery | Corrupt configuration is preserved and cannot be overwritten until explicit recovery; stalled requests time out with actionable errors |
 | Model information | Source and timestamp for context limits and capabilities; optional tool and image tests; unknown information stays unknown |
 
+## Official authorization and subscription connections
+
+In a provider form, select **Authentication**. API-key connections remain available independently of plan connections. Do not paste website cookies or reuse a subscription login token as an API key.
+
+| Provider | Connection choices and limits |
+|---|---|
+| OpenAI | API key, or **Continue with ChatGPT** using the [public open-source token-sharing flow](https://developers.openai.com/siwc/token-sharing-open-source). The account and workspace must be eligible and grant plan permission. OAuth credentials stay on the official endpoint. App limits pause new requests until you review usage and explicitly resume; no API-billing fallback occurs. |
+| Kimi / Moonshot | Existing Moonshot API key, or a separate [Kimi Code key](https://www.kimi.com/help/kimi-code/membership-guide). Check personal development eligibility; a general Accio research task is not automatically permitted. Extra usage follows your provider settings. |
+| DeepSeek | Existing API key; model IDs come from the service instead of an old default. The optional [balance lookup](https://api-docs.deepseek.com/api/get-user-balance/) uses only the official endpoint. No consumer-plan OAuth is assumed. |
+| MiniMax | Ordinary API key, or a region-specific subscription key. The international [M Plan](https://www.minimax.io/m-plan) usage endpoint can return a snapshot; undocumented numeric fields retain their original names and are not converted to guessed tokens or reset times. China-region usage opens the provider console. |
+| GLM / Bailian | Ordinary API keys remain. Separate [GLM Coding Plan](https://docs.bigmodel.cn/cn/coding-plan/tool/others) and [Bailian Token/Coding Plan](https://help.aliyun.com/zh/model-studio/more-tools) routes require acknowledgment of permitted interactive use. Restrictions and supported models vary by plan. |
+| OpenRouter | API key or [official OAuth PKCE](https://openrouter.ai/docs/guides/overview/auth/oauth), which issues this app a key using OpenRouter billing. Its reported key limit is not the whole account balance or another provider's subscription. |
+| Claude, Gemini and other existing presets | Existing API connections remain; no new Claude subscription OAuth or consumer Google AI subscription transfer is provided. Local models can use a loopback-only no-key mode. |
+
+Access documentation was reviewed on 2026-10-01. The app does not impersonate official clients. Saved authorization tokens are encrypted in a separate local vault and never returned to the renderer, session backups, configuration backups or diagnostic exports. Signing out reports whether remote revocation was confirmed; for OpenRouter, remove the app key in its console when needed. Refresh tokens are never restored from an old backup.
+
+## Everyday use, recovery and maintenance
+
+- **Capability evidence:** text, tool, image and tool-result round trips are separate checks. Changes to the connection or model invalidate the matching record. Checks older than 30 days get a manual-review reminder; the app does not automatically generate requests. Overview's review action opens the relevant checks. A synthetic pass is not a real long-task acceptance result.
+- **Switching:** marked fallback connections appear after failures. Switching affects future requests and their conversation/tool context. It requires destination and billing review; in-flight work is not replayed.
+- **Context and spending:** Overview and Usage show the current connection's latest default-model request, provider-reported tokens or a labelled text estimate, the window source/date, and an 80% warning. After connection changes they wait for matching requests; older logs remain in history. Media and opaque reasoning may be missing from estimates. API cost coverage excludes subscription/local requests. Missing price or allowance never means free.
+- **Automatic backups:** opt in under Session backups. Once a day, changed accounts are backed up while Accio is closed; keep 1–30 automatic snapshots per account. Manual and protection backups are retained. SHA-256 and SQLite integrity are checked on the staged copy before restore/migration writes. A preview identifies scope, conflicts, unknown structures and consistency limits.
+- **Backup status:** Overview and Session backups read the latest closed-session snapshot from disk, including after restart. The summary names its account; other accounts may have older or no backups. Snapshots over seven days old prompt review if work has changed. Enabling automatic backups is separate from completing one. These dates do not replace restore-time integrity checks.
+- **Updates:** Settings checks this repository's GitHub releases, shows notes and prerelease status, and permits downloads only with a published SHA-256 digest. The digest is checked again before opening the package. Installation is explicit and requires Accio to be closed. The encrypted configuration backup stays under `updates/` in the data directory.
+- **Rollback:** retain the previous executable. Run the version that created the backup, then choose **Restore configuration backup**. Only an exact-version backup is accepted. The current configuration is preserved, active routing returns to official, and automatic launch/backups are disabled for review. This does not downgrade Accio data or restore OAuth tokens. Versions before 1.4 do not support these new connection types.
+- **Diagnostics:** preview before saving. Default reports contain status/timing/usage only. Up to three captured conversations may be included explicitly; known credentials are masked, but arbitrary private prose requires your review. Reports are saved locally, never uploaded.
+
 ## Gateways and credentials
 
-Presets provide connection starting points. They do not deploy gateways, sign in to subscription accounts, or change gateway account pools. Enter a **client API key issued by the gateway**, not an admin key, OAuth login token, or website cookie. Fetch model IDs from the actual API or follow its documentation.
+Gateway presets provide connection starting points. They do not deploy gateways, sign in to subscription accounts, or change gateway account pools. Enter a **client API key issued by the gateway**, not an admin key, OAuth login token, or website cookie. Fetch model IDs from the actual API or follow its documentation.
 
 | Connection | URL and protocol |
 |---|---|
@@ -111,7 +140,7 @@ Version 1.3.0 adds a saved language preference. Configurations without it open i
 
 ## Development and verification
 
-See [Implementation and acceptance notes](docs/next-stage.md) for scope, evidence, and the compaction investigation's stop condition (the current release note is bilingual; historical records remain in Chinese). The existing 38 checks cover protocol completion, tool termination, empty results, signature isolation, migration content protection, credentials, and forwarding boundaries. Type checking and builds pass. UI and package evidence is recorded separately.
+See [Implementation and acceptance notes](docs/next-stage.md) for scope, evidence, and the compaction investigation's stop condition. All 48 checks pass, including targeted authorization, update integrity and recovery checks in addition to the existing protocol, credential and migration protections. Type checking and builds pass. UI and package evidence is recorded separately.
 
 Real paid providers, native long-conversation compaction, actual upgrade installation, and Windows login startup have not been fully tested.
 

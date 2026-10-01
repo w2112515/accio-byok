@@ -1,4 +1,6 @@
-import { getLanguage, tr } from '../../../shared/i18n.ts'
+import { getLanguage, tr, tx } from '../../../shared/i18n.ts'
+import { ACCESS_REVIEWED_AT, SUBSCRIPTION_ROUTES, subscriptionRoute, fundingLabel, usageUrl } from '../../../shared/provider-access.ts'
+import { checkNeedsReview, checkScopeLabel } from '../../../shared/connection-status.ts'
 import {
   ArrowLeft,
   Check,
@@ -32,6 +34,7 @@ import {
   type TestScope,
   type ModelInfo,
   type ThinkingMode,
+  type AuthMode,
   type UsageStats,
 } from '../../../shared/types.ts'
 import { effectState, PageHeader, StartAccioButton, useSwitchProvider } from '../App.tsx'
@@ -94,6 +97,10 @@ interface Draft {
   pricingModel: string
   pricingUpdatedAt?: number
   modelInfo?: ModelInfo
+  authMode: AuthMode
+  credentialId?: string
+  subscriptionAcknowledged: boolean
+  fallbackEligible: boolean
 }
 
 const num = (s: string) => {
@@ -133,6 +140,7 @@ function fromPreset(p: ProviderPreset): Draft {
     pricingModel: d.model ?? '',
     pricingUpdatedAt: d.pricing ? knownModelInfo(p.kind, p.baseUrl, d.model ?? '')?.checkedAt : undefined,
     modelInfo: knownModelInfo(p.kind, p.baseUrl, d.model ?? ''),
+    authMode: p.category === 'local' ? 'none' : 'api-key', subscriptionAcknowledged: false, fallbackEligible: false,
   }
 }
 
@@ -168,6 +176,7 @@ function fromView(v: ProviderView): Draft {
     pricingModel: v.pricingModel ?? v.model,
     pricingUpdatedAt: v.pricingUpdatedAt,
     modelInfo: v.modelInfo,
+    authMode: v.authMode ?? 'api-key', credentialId: v.credentialId, subscriptionAcknowledged: v.subscriptionAcknowledged ?? false, fallbackEligible: v.fallbackEligible ?? false,
   }
 }
 
@@ -190,6 +199,7 @@ function toInput(d: Draft): ProviderInput {
     baseUrl: d.baseUrl,
     apiKey: d.keyTouched ? d.apiKey : undefined,
     model: d.model,
+    authMode: d.authMode, credentialId: d.credentialId, subscriptionAcknowledged: d.subscriptionAcknowledged, fallbackEligible: d.fallbackEligible,
     modelOverrides: Object.fromEntries(d.overrides.filter((o) => o.from && o.to).map((o) => [o.from, o.to])),
     maxOutputTokens: num(d.maxOutputTokens),
     sendReasoningEffort: d.sendReasoningEffort,
@@ -379,7 +389,7 @@ function ToggleRow({ label, hint, checked, onChange }: { label: string; hint?: s
   )
 }
 
-function ProviderEditor({ open, onOpenChange, initial }: { open: boolean; onOpenChange: (v: boolean) => void; initial: ProviderView | 'new' | null }) {
+function ProviderEditor({ open, onOpenChange, initial, focusChecks = false }: { open: boolean; onOpenChange: (v: boolean) => void; initial: ProviderView | 'new' | null; focusChecks?: boolean }) {
   const { state, logs } = useStore()
   const [step, setStep] = useState<'preset' | 'form' | 'ready'>('preset')
   const [ready, setReady] = useState<{ provider: ProviderView; at: number } | null>(null)
@@ -390,12 +400,16 @@ function ProviderEditor({ open, onOpenChange, initial }: { open: boolean; onOpen
   const [draft, setDraft] = useState<Draft | null>(null)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
+  const [signingIn, setSigningIn] = useState(false)
+  const [welcome, setWelcome] = useState(false)
   const [test, setTest] = useState<TestResult | null>(null)
   const [accioModels, setAccioModels] = useState<AccioModelInfo[]>([])
   const switchTo = useSwitchProvider()
   const latestDraft = useRef(draft)
   latestDraft.current = draft
   const operation = useRef(0)
+  const checksSection = useRef<HTMLDivElement>(null)
+  const savedChecks = initial && initial !== 'new' ? state?.providers.find((p) => p.id === initial.id)?.checks : undefined
 
   useEffect(() => {
     operation.current++
@@ -418,6 +432,14 @@ function ProviderEditor({ open, onOpenChange, initial }: { open: boolean; onOpen
     void api.accioModels().then(setAccioModels).catch(() => setAccioModels([]))
   }, [open, initial])
   useEffect(() => { setTest(null); setFormError(undefined) }, [draft])
+  useEffect(() => {
+    if (!open || step !== 'form' || !focusChecks) return
+    const frame = requestAnimationFrame(() => {
+      checksSection.current?.scrollIntoView({ block: 'center' })
+      checksSection.current?.querySelector('button')?.focus({ preventScroll: true })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [open, step, focusChecks])
 
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft((d) => {
     if (!d) return d
@@ -429,6 +451,28 @@ function ProviderEditor({ open, onOpenChange, initial }: { open: boolean; onOpen
     }
   })
   const preset = findPreset(draft?.presetId)
+  const isOAuth = !!draft?.authMode.endsWith('-oauth')
+  const lockedEndpoint = isOAuth || draft?.authMode === 'subscription-key'
+  const registration = state?.authorizations?.find((a) => a.id === draft?.credentialId)
+  const subscription = draft ? subscriptionRoute(draft) : undefined
+  const changeAuth = (mode: AuthMode) => {
+    if (!draft || !preset) return
+    const route = SUBSCRIPTION_ROUTES[preset.id]?.[0]
+    setDraft({ ...draft, authMode: mode, credentialId: undefined, kind: mode === 'api-key' ? preset.kind : 'openai', openaiApi: mode === 'openai-oauth' ? 'responses' : mode === 'subscription-key' || mode === 'openrouter-oauth' ? 'chat' : preset.defaults.openaiApi ?? 'chat', baseUrl: mode === 'subscription-key' ? route!.baseUrl : preset.baseUrl, model: mode === 'subscription-key' ? route?.model ?? '' : '', apiKey: '', hasKey: false, keyTouched: true, headersText: '', subscriptionAcknowledged: false, modelInfo: undefined, priceIn: '', priceOut: '', priceCached: '', priceWrite: '' })
+  }
+  const signIn = async (newAccount = false) => {
+    if (!draft || !isOAuth) return
+    const currentDraft = draft
+    setSigningIn(true); setFormError(undefined)
+    try {
+      const result = await api.signIn(draft.authMode === 'openai-oauth' ? 'openai' : 'openrouter', newAccount ? undefined : draft.credentialId)
+      if (latestDraft.current !== currentDraft) return
+      setDraft({ ...draft, credentialId: result.id })
+      if (result.service === 'openai' && result.firstSignIn && result.planEnabled) setWelcome(true)
+      if (!result.planEnabled) setInfoMessage(tx('Signed in. ChatGPT plan permission is disabled; continue with ChatGPT to enable it.', '已登录，但未授权使用 ChatGPT 套餐；请继续登录并启用权限。'))
+    } catch (e) { setFormError((e as Error).message) }
+    finally { setSigningIn(false) }
+  }
   const modelInfo = draft ? draft.modelInfo?.model === draft.model.trim() ? draft.modelInfo : knownModelInfo(draft.kind, draft.baseUrl, draft.model.trim()) : undefined
   const readInfo = async () => {
     if (!draft) return
@@ -512,9 +556,9 @@ function ProviderEditor({ open, onOpenChange, initial }: { open: boolean; onOpen
     .map((m) => ({ value: m.code, label: m.name, description: m.code }))
 
   return (
-    <Modal
+    <><Modal
       open={open}
-      onOpenChange={(v) => { if (!saving) onOpenChange(v) }}
+      onOpenChange={(v) => { if (!saving) { if (!v && signingIn) void api.cancelSignIn(); onOpenChange(v) } }}
       className="w-[min(680px,calc(100vw-48px))]"
       title={
         step === 'ready' ? tr("模型已保存并选择") : step === 'preset' ? (
@@ -537,15 +581,15 @@ function ProviderEditor({ open, onOpenChange, initial }: { open: boolean; onOpen
             {test?.protection ? <ConnectionStatus value={test.protection} /> : null}
             {formError ? <p role="alert" className="max-h-24 overflow-y-auto rounded-lg bg-danger-soft p-3 text-[12.5px] text-danger">{formError}</p> : null}
             {testing || test ? <div role="status" className={cn('max-h-28 overflow-y-auto rounded-lg border px-3 py-2.5 text-[12.5px] leading-relaxed break-words', test ? test.ok ? 'border-success/30 text-success' : 'border-danger/30 text-danger' : 'border-border text-muted')}>
-              {testing ? tr("正在测试提交时的配置…修改配置后，本次结果不再适用。") : <>{test?.scope ? `${{ text: tr("短文本"), tools: tr("工具调用"), image: tr("图片识别") }[test.scope]} · ` : ''}{test?.checkedAt ? `${fmtDateTime(test.checkedAt)} · ` : ''}{test?.ok ? tr("通过 · {0} · {1}", fmtMs(test.latencyMs), test.message) : test?.message}</>}
+              {testing ? tr("正在测试提交时的配置…修改配置后，本次结果不再适用。") : <>{test?.scope ? `${{ text: tr("短文本"), tools: tr("工具调用"), image: tr("图片识别"), multiturn: tx('Tool round trip', '工具多轮续接') }[test.scope]} · ` : ''}{test?.checkedAt ? `${fmtDateTime(test.checkedAt)} · ` : ''}{test?.ok ? tr("通过 · {0} · {1}", fmtMs(test.latencyMs), test.message) : test?.message}</>}
             </div> : null}
             <div className="flex justify-end gap-2">
-            <Button onClick={() => void runTest()} disabled={saving || testing || !!urlError || !draft.model.trim()}>
+            <Button onClick={() => void runTest()} disabled={signingIn || saving || testing || !!urlError || !draft.model.trim()}>
               <Wifi />
               {tr("测试")}</Button>
-            <Button onClick={save} disabled={saving || testing || !!urlError || !draft.model.trim()}>
+            <Button onClick={save} disabled={signingIn || saving || testing || !!urlError || !draft.model.trim()}>
               {tr("仅保存")}</Button>
-            <Button variant="primary" onClick={() => void runTest(true)} loading={saving || testing} disabled={!!urlError || !draft.model.trim()}>
+            <Button variant="primary" onClick={() => void runTest(true)} loading={saving || testing} disabled={signingIn || !!urlError || !draft.model.trim()}>
               {tr("测试并启用")}</Button>
             </div>
           </div>
@@ -567,10 +611,41 @@ function ProviderEditor({ open, onOpenChange, initial }: { open: boolean; onOpen
         />
       ) : draft ? (
         <fieldset disabled={saving} className="min-w-0 space-y-5">
-          <div className="grid grid-cols-2 gap-4">
+          <Field label={tx('Authentication', '认证方式')}>
+            <SelectBox label={tx('Authentication', '认证方式')} value={draft.authMode} disabled={signingIn} onChange={(v) => changeAuth(v as AuthMode)} options={[
+              { value: 'api-key', label: 'API Key' },
+              ...(preset?.id === 'openai' ? [{ value: 'openai-oauth', label: 'ChatGPT · OAuth' }] : []),
+              ...(preset?.id === 'openrouter' ? [{ value: 'openrouter-oauth', label: 'OpenRouter · OAuth' }] : []),
+              ...(SUBSCRIPTION_ROUTES[preset?.id ?? ''] ? [{ value: 'subscription-key', label: tx('Subscription key', '订阅专用 Key') }] : []),
+              ...(preset?.category === 'local' ? [{ value: 'none', label: tx('No key · Local model', '无 Key · 本地模型') }] : []),
+            ]} />
+          </Field>
+          {isOAuth ? <div className="space-y-3 rounded-xl border border-border p-4">
+            <p className="text-[13px] font-medium">{draft.authMode === 'openai-oauth' && (!registration?.connected || !registration.planEnabled) ? tx('Connect your ChatGPT plan', '连接 ChatGPT 套餐') : fundingLabel(draft)}</p>
+            <p className="text-[12px] leading-relaxed text-muted">{draft.authMode === 'openai-oauth' ? tx('Uses your eligible ChatGPT plan and any credits you enable in ChatGPT settings. Access depends on your account and workspace. Your API key remains a separate connection.', '使用符合条件的 ChatGPT 套餐及你在 ChatGPT 设置中启用的积分；是否可用取决于账号和工作区。API Key 连接单独保存。') : tx('OpenRouter creates an API key for this app in your browser. Requests use your OpenRouter billing, not another provider’s subscription.', 'OpenRouter 在浏览器中为此应用创建 API Key，使用 OpenRouter 的计费方式，不会转接其他厂商的订阅。')}</p>
+            {(state?.authorizations ?? []).some((a) => a.service === (draft.authMode === 'openai-oauth' ? 'openai' : 'openrouter')) ? <SelectBox label={tx('Saved account', '已保存账号')} value={draft.credentialId} disabled={signingIn} onChange={(v) => set('credentialId', v)} placeholder={tx('Select an account', '选择账号')} options={(state?.authorizations ?? []).filter((a) => a.service === (draft.authMode === 'openai-oauth' ? 'openai' : 'openrouter')).map((a) => ({ value: a.id, label: `${a.label} · ${a.connected ? tx('Connected', '已连接') : tx('Signed out', '已退出')}` }))} /> : null}
+            {registration ? <p role="status" className="text-[12px] text-muted">{registration.connected ? tx('Signed in', '已登录') : tx('Sign-in required', '需要重新登录')} · {registration.label}</p> : null}
+            {registration?.pauseReason ? <p role="alert" className="text-[12px] text-warning">{registration.pauseReason}</p> : null}
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="primary" loading={signingIn} onClick={() => void signIn()}>{draft.authMode === 'openai-oauth' ? 'Continue with ChatGPT' : tx('Connect OpenRouter', '连接 OpenRouter')}</Button>
+              {signingIn ? <Button type="button" onClick={() => void api.cancelSignIn()}>{tr('取消')}</Button> : draft.credentialId ? <Button type="button" onClick={() => void signIn(true)}>{tx('Add another account', '添加另一个账号')}</Button> : null}
+              <Button type="button" onClick={() => void api.openExternal(draft.authMode === 'openai-oauth' ? 'https://chatgpt.com/settings/usage' : 'https://openrouter.ai/keys')}>{tx('Manage usage', '管理用量')}</Button>
+              {registration?.pauseReason ? <Button type="button" disabled={signingIn} onClick={() => void api.resumeAuthorization(registration.id).catch((e) => toast.error(e.message))}>{tx('Resume after checking usage', '已核对用量，恢复请求')}</Button> : null}
+            </div>
+            {signingIn ? <p role="status" className="text-[12px] text-muted">{tx('Complete sign-in in your browser, then return here. Waiting up to 5 minutes.', '请在浏览器完成登录后返回，最多等待 5 分钟。')}</p> : null}
+          </div> : null}
+          {draft.authMode === 'subscription-key' ? <div className="space-y-3 rounded-xl border border-warning/30 p-4">
+            <SelectBox label={tx('Subscription endpoint', '订阅服务端点')} value={draft.baseUrl} onChange={(v) => setDraft({ ...draft, baseUrl: v, model: SUBSCRIPTION_ROUTES[draft.presetId!].find((r) => r.baseUrl === v)?.model ?? '', subscriptionAcknowledged: false, modelInfo: undefined })} options={SUBSCRIPTION_ROUTES[draft.presetId!]!.map((r) => ({ value: r.baseUrl, label: r.name }))} />
+            <p className="text-[12px] leading-relaxed text-muted">{tx('Use only for the personal interactive coding / agent tasks permitted by this plan. General Accio research and unattended automation may be excluded. The provider may charge extra usage if you enabled it; remaining quota and extra charges are not inferred locally.', '仅用于套餐允许的个人交互式编程或 Agent 任务。普通 Accio 调研及无人值守自动化可能不在允许范围；供应商可按已开启的设置扣除额外用量，本地不推算剩余额度或额外费用。')}</p>
+            <Button type="button" size="sm" onClick={() => subscription && void api.openExternal(subscription.docsUrl)}>{tx('Read plan rules', '查看套餐规则')}</Button>
+            <ToggleRow label={tx('My intended use is permitted by this plan', '我的使用场景符合此套餐规则')} checked={draft.subscriptionAcknowledged} onChange={(v) => set('subscriptionAcknowledged', v)} />
+            <p className="text-[11px] text-subtle">{tx('Access documentation reviewed', '接入文档核对日期')} · {ACCESS_REVIEWED_AT}</p>
+          </div> : null}
             <Field label={tr("名称")} htmlFor="pv-name">
               <Input id="pv-name" value={draft.name} onChange={(e) => set('name', e.target.value)} placeholder={preset?.name ?? tr("给它起个名字")} />
             </Field>
+          <fieldset disabled={lockedEndpoint || signingIn} className="min-w-0 space-y-5">
+          <div>
             <Field label={tr("接口类型")}>
               <Segmented
                 label={tr("接口类型")}
@@ -581,7 +656,7 @@ function ProviderEditor({ open, onOpenChange, initial }: { open: boolean; onOpen
               />
             </Field>
           </div>
-          {draft.kind === 'openai' ? <Field label={tr("OpenAI 接口协议")} hint={tr("Codex 类分组通常使用 Responses；以网关提供的接入说明为准。")}>
+          {draft.kind === 'openai' ? <Field label={tr("OpenAI 接口协议")} hint={lockedEndpoint ? tx('This connection uses the provider’s official protocol and destination.', '此连接使用供应商的官方协议与地址。') : tr("Codex 类分组通常使用 Responses；以网关提供的接入说明为准。")}>
             <Segmented label={tr("OpenAI 接口协议")} value={draft.openaiApi} onChange={(v) => set('openaiApi', v)} options={[{ value: 'chat', label: 'Chat Completions' }, { value: 'responses', label: 'Responses' }]} />
           </Field> : null}
           <Field
@@ -596,10 +671,11 @@ function ProviderEditor({ open, onOpenChange, initial }: { open: boolean; onOpen
             <p>{tr("填写已部署网关的客户端 API Key，不要填写管理密钥、订阅账号登录令牌或 Cookie。中转服务能够接触你的请求内容，账号限制仍取决于服务方规则。")}</p>
             {preset.docsUrl ? <button type="button" className="mt-1 inline-flex items-center gap-1 text-accent hover:underline" onClick={() => void api.openExternal(preset.docsUrl!)}>{tr("项目接入说明 ")}<ExternalLink className="size-3" /></button> : null}
           </div> : null}
-          <Field
+          </fieldset>
+          {!isOAuth && draft.authMode !== 'none' ? <Field
             label={
               <span className="flex items-center justify-between">
-                API Key
+                {draft.authMode === 'subscription-key' ? tx('Subscription key', '订阅专用 Key') : 'API Key'}
                 {preset?.keyUrl ? (
                   <button type="button" onClick={() => void api.openExternal(preset.keyUrl!)} className="inline-flex items-center gap-1 text-[12px] font-normal text-accent hover:underline">
                     {tr("获取 Key ")}<ExternalLink className="size-3" />
@@ -616,7 +692,7 @@ function ProviderEditor({ open, onOpenChange, initial }: { open: boolean; onOpen
               onChange={(e) => setDraft((d) => (d ? { ...d, apiKey: e.target.value, keyTouched: true, modelInfo: undefined } : d))}
               placeholder={draft.hasKey && !draft.keyTouched ? tr("已保存 {0}（留空保持不变）", draft.keyMasked) : 'sk-…'}
             />
-          </Field>
+          </Field> : null}
           <Field label={tr("默认模型")} htmlFor="pv-model" hint={tr("Accio 里选择的任何模型都会被替换成它，除非在下方单独映射。")}>
             <ModelPicker id="pv-model" draft={draft} value={draft.model} onChange={(v) => set('model', v)} />
           </Field>
@@ -625,12 +701,15 @@ function ProviderEditor({ open, onOpenChange, initial }: { open: boolean; onOpen
             <p>{tr("工具：")}{modelInfo?.tools === undefined ? tr("未确认") : modelInfo.tools ? tr("资料支持") : tr("资料不支持")} {tr(" · 图像：")}{modelInfo?.vision === undefined ? tr("未确认") : modelInfo.vision ? tr("资料支持") : tr("资料不支持")}</p>
             {modelInfo ? <p className="mt-1 text-subtle">{tr("来源：")}{{ official: tr("官方资料"), api: tr("供应商接口"), user: tr("手动填写") }[modelInfo.source]} · {fmtDateTime(modelInfo.checkedAt)}{modelInfo.sourceUrl ? <button type="button" className="ml-2 text-accent hover:underline" onClick={() => void api.openExternal(modelInfo.sourceUrl!)}>{tr("查看来源")}</button> : null}</p> : <p className="mt-1 text-subtle">{tr("短文本通过不代表工具和图像可用；可展开下方模型信息核对。")}</p>}
           </div>
-          <p className="text-[12px] leading-relaxed text-subtle">{tr("模型列表缓存 5 分钟。连接测试只验证短文本，最多请求 1024 个输出 Token，不额外开启思考，可能产生费用。检测费用不计入 Accio 请求统计。")}</p>
+          <p className="text-[12px] leading-relaxed text-subtle">{tx('Checks send synthetic prompts and may consume paid usage or subscription quota. Tool round trips send up to two requests. Checks are excluded from Accio usage totals. ChatGPT plan requests cannot set an output-token limit.', '检测会发送合成提示词，可能消耗费用或套餐额度。工具多轮检测最多发送两次请求，检测用量不计入 Accio 汇总。ChatGPT 套餐请求不支持设置输出 Token 上限。')}</p>
           {initial && initial !== 'new' && initial.keyError && !draft.keyTouched ? <p role="alert" className="text-[12.5px] text-danger">{initial.keyError}</p> : null}
-          <Section title={tr("可选能力检测")} description={tr("需要工具或图片功能时分别检查；不会自动调用")}>
-            <p className="text-[12px] leading-relaxed text-subtle">{tr("每次发送一个最多 1024 输出 Token 的请求，可能收费。工具检测只要求返回固定参数，不执行操作；图片检测只发送内置的红色方块。结果仅对应本次配置，不代表长会话或完整工具循环已经通过。")}</p>
-            <div className="flex gap-2"><Button size="sm" disabled={saving || testing || !!urlError || !draft.model.trim()} onClick={() => void runTest(false, 'tools')}>{tr("检测工具调用")}</Button><Button size="sm" disabled={saving || testing || !!urlError || !draft.model.trim()} onClick={() => void runTest(false, 'image')}>{tr("检测图片识别")}</Button></div>
-          </Section>
+          <div ref={checksSection}><Section title={tr("可选能力检测")} description={tr("需要工具或图片功能时分别检查；不会自动调用")} defaultOpen={focusChecks}>
+            <p className="text-[12px] leading-relaxed text-subtle">{tx('Tool checks return fixed arguments without executing real tools. Image checks use a built-in red square. Results apply to the tested configuration.', '工具检测仅返回固定参数，不执行真实工具；图片检测使用内置红色方块，结果只适用于被检测的配置。')}</p>
+            <div className="flex flex-wrap gap-2"><Button size="sm" disabled={saving || testing || !!urlError || !draft.model.trim()} onClick={() => void runTest(false, 'tools')}>{tr("检测工具调用")}</Button><Button size="sm" disabled={saving || testing || !!urlError || !draft.model.trim()} onClick={() => void runTest(false, 'image')}>{tr("检测图片识别")}</Button><Button size="sm" disabled={saving || testing || !!urlError || !draft.model.trim()} onClick={() => void runTest(false, 'multiturn')}>{tx('Check tool round trip', '检测工具多轮续接')}</Button></div>
+            {savedChecks?.length ? <div className="space-y-1 text-[12px] text-muted"><p>{tx('Saved connection evidence; edits require new checks. Checks older than 30 days are flagged for review, without automatic requests.', '已保存连接的验证记录；更改配置后需要重新检测。超过 30 天会提示复核，不自动发送请求。')}</p>{savedChecks.map((c) => <p key={c.scope} className={c.ok && checkNeedsReview(c) ? 'text-warning' : undefined}>{checkScopeLabel(c.scope)} · {c.ok ? checkNeedsReview(c) ? tx('Previously passed · review recommended', '曾通过 · 建议复核') : tx('Passed', '通过') : tx('Failed', '失败')} · {fmtDateTime(c.checkedAt)}</p>)}</div> : null}
+          </Section></div>
+
+          <ToggleRow label={tx('Offer as a fallback', '加入备用连接列表')} hint={tx('Available for manual switching after a failure. No automatic retry or paid fallback.', '失败后可手动切换到此连接；不会自动重试或转入付费通道。')} checked={draft.fallbackEligible} onChange={(v) => set('fallbackEligible', v)} />
 
           <Section title={tr("模型信息与窗口")} description={tr("读取供应商元数据，或依据文档填写；只适用于当前默认模型")}>
             <div className="flex flex-wrap items-center gap-3"><Button type="button" size="sm" loading={readingInfo} disabled={!draft.model.trim() || !!urlError} onClick={() => void readInfo()}>{tr("读取模型信息")}</Button><span className="text-[12px] text-subtle">{tr("读取元数据，不发送生成请求；缓存 5 分钟。")}</span></div>
@@ -673,8 +752,8 @@ function ProviderEditor({ open, onOpenChange, initial }: { open: boolean; onOpen
             <p className="text-[12px] leading-relaxed text-muted">{tr("连接保护：相同地址与凭据最多 4 个并发请求；HTTP 429 后按 Retry-After 等待（缺失时 60 秒）。不会自动重试、切换账户或跟随接口重定向。这些措施不能保证账号不受限。")}</p>
             {/^http:\/\//i.test(draft.baseUrl) ? <ToggleRow label={tr("允许远程 HTTP")} hint={tr("仅在你了解风险时开启：本机以外的 HTTP 会明文传输 Key 和会话。优先使用 HTTPS。本机服务不需要开启。")} checked={draft.allowInsecureHttp} onChange={(v) => set('allowInsecureHttp', v)} /> : null}
             <p className="text-[12px] leading-relaxed text-subtle">{tr("自动压缩由 Accio 管理，依据它所选模型的上下文窗口。BYOK 热切换不会同步该阈值；目标模型窗口较小时，建议先压缩或新建会话。提示缓存节省重复输入成本，不会扩大上下文窗口。")}</p>
-            <Field label={tr("最大输出 Token")} htmlFor="pv-max" hint={tr("留空则沿用 Accio 的请求值（通常 16384）。部分模型上限较低，如 8192。")}>
-              <Input id="pv-max" value={draft.maxOutputTokens} onChange={(e) => set('maxOutputTokens', e.target.value.replace(/[^\d]/g, ''))} placeholder={tr("沿用 Accio")} className="w-48 tabular" />
+            <Field label={tr("最大输出 Token")} htmlFor="pv-max" hint={draft.authMode === 'openai-oauth' ? tx('Not supported by ChatGPT plan requests; this value is omitted.', 'ChatGPT 套餐请求不支持此参数，不会发送。') : tr("留空则沿用 Accio 的请求值（通常 16384）。部分模型上限较低，如 8192。")}>
+              <Input id="pv-max" disabled={draft.authMode === 'openai-oauth'} value={draft.maxOutputTokens} onChange={(e) => set('maxOutputTokens', e.target.value.replace(/[^\d]/g, ''))} placeholder={tr("沿用 Accio")} className="w-48 tabular" />
             </Field>
             <ToggleRow label={tr("转发推理强度")} hint={tr("把 Accio 里选择的推理强度（低/中/高）传给模型。旧模型可能不支持这个参数。")} checked={draft.sendReasoningEffort} onChange={(v) => set('sendReasoningEffort', v)} />
             {draft.kind === 'openai' && draft.openaiApi !== 'responses' ? (
@@ -702,13 +781,13 @@ function ProviderEditor({ open, onOpenChange, initial }: { open: boolean; onOpen
                 <ToggleRow label={tr("提示缓存")} hint={tr("为系统提示和对话添加缓存断点。相同前缀才可能命中；压缩历史、修改工具或思考参数可能使缓存失效。首次写入也计费。")} checked={draft.promptCaching} onChange={(v) => set('promptCaching', v)} />
               </>
             ) : null}
-            <ToggleRow label={tr("转发采样参数")} hint={tr("转发 temperature / top_p。较新的 Claude 和推理模型会拒绝这些参数。")} checked={draft.sendSampling} onChange={(v) => set('sendSampling', v)} />
+            {draft.authMode !== 'openai-oauth' ? <ToggleRow label={tr("转发采样参数")} hint={tr("转发 temperature / top_p。较新的 Claude 和推理模型会拒绝这些参数。")} checked={draft.sendSampling} onChange={(v) => set('sendSampling', v)} /> : null}
             <Field label={tr("自定义请求头")} htmlFor="pv-headers" hint={tr("每行一个，格式为「名称: 值」。保存时随 Key 加密；此编辑区会显示原值。禁止 Cookie 和传输控制头。")}>
-              <Textarea id="pv-headers" value={draft.headersText} onChange={(e) => set('headersText', e.target.value)} placeholder="X-Custom-Header: value" className="font-mono text-[12.5px]" rows={3} spellCheck={false} />
+              <Textarea id="pv-headers" disabled={lockedEndpoint} value={draft.headersText} onChange={(e) => set('headersText', e.target.value)} placeholder="X-Custom-Header: value" className="font-mono text-[12.5px]" rows={3} spellCheck={false} />
             </Field>
           </Section>
 
-          <Section title={tr("价格")} description={tr("填写后用量页会估算花费（美元 / 百万 Token）")}>
+          {draft.authMode === 'openai-oauth' || draft.authMode === 'subscription-key' ? <p className="text-[12px] leading-relaxed text-muted">{tx('Subscription usage is recorded separately. API token prices do not describe subscription quota or extra-usage charges.', '订阅用量单独记录；API Token 单价不能代表套餐额度或额外用量费用。')}</p> : <Section title={tr("价格")} description={tr("填写后用量页会估算花费（美元 / 百万 Token）")}>
             <p className="text-[12px] leading-relaxed text-muted">{tr("单价用于 ")}<span className="font-mono">{draft.pricingModel || tr("尚未指定的模型")}</span>{draft.pricingUpdatedAt ? tr(" · 更新于 {0}", fmtDateTime(draft.pricingUpdatedAt)) : tr(" · 更新时间未记录")}{tr("。模型映射不会套用默认模型单价。")}</p>
             {draft.pricingModel !== draft.model.trim() && [draft.priceIn, draft.priceOut, draft.priceCached, draft.priceWrite].some(Boolean) ? <div className="space-y-2 rounded-lg bg-warning-soft p-3 text-[12px] text-warning"><p>{tr("这些单价属于其他模型，当前模型的费用将显示为未知。请核对后填写或确认沿用。")}</p><Button size="sm" onClick={() => setDraft({ ...draft, pricingModel: draft.model.trim(), pricingUpdatedAt: Date.now() })}>{tr("确认这些单价用于当前模型")}</Button></div> : null}
             {modelInfo?.pricing ? <Button size="sm" onClick={() => setDraft({ ...draft, priceIn: String(modelInfo.pricing!.input ?? ''), priceOut: String(modelInfo.pricing!.output ?? ''), priceCached: '', priceWrite: '', pricingModel: draft.model.trim(), pricingUpdatedAt: modelInfo.checkedAt })}>{tr("填入官方参考输入 / 输出单价")}</Button> : null}
@@ -726,10 +805,13 @@ function ProviderEditor({ open, onOpenChange, initial }: { open: boolean; onOpen
                 <Input id="pv-pw" value={draft.priceWrite} onChange={(e) => set('priceWrite', e.target.value)} placeholder={tr("自动估算")} className="tabular" />
               </Field>
             </div>
-          </Section>
+          </Section>}
         </fieldset>
       ) : null}
     </Modal>
+    <Modal open={welcome} onOpenChange={setWelcome} title={tx("You're using your ChatGPT plan", '你正在使用 ChatGPT 套餐')} footer={<Button variant="primary" onClick={() => setWelcome(false)}>{tx('Got it', '知道了')}</Button>}>
+      <p className="text-[13px] leading-relaxed text-muted">{tx('Eligible requests use your ChatGPT plan or enabled credits. Review app limits and extra usage in ChatGPT settings.', '符合条件的请求会使用 ChatGPT 套餐或已启用的积分；可在 ChatGPT 设置中管理应用限额及额外用量。')}</p><Button className="mt-3" onClick={() => void api.openExternal('https://chatgpt.com/settings/usage')}>{tx('Manage usage', '管理用量')}</Button>
+    </Modal></>
   )
 }
 
@@ -850,7 +932,7 @@ function ProviderCard({ p, active, health, onEdit, onDelete }: { p: ProviderView
           <dt className="text-muted">Key</dt>
           <dd className="flex items-center gap-1 truncate font-mono text-muted">
             <KeyRound className="size-3" />
-            {p.hasApiKey ? p.apiKeyMasked : tr("未设置")}
+            {p.authorization ? `${p.authorization.connected ? tx('Signed in', '已登录') : tx('Signed out', '已退出')} · ${p.authorization.label}` : p.authMode === 'none' ? tx('Not required', '无需 Key') : p.hasApiKey ? p.apiKeyMasked : tr("未设置")}
           </dd>
         </div>
         {Object.keys(p.modelOverrides ?? {}).length ? (
@@ -860,6 +942,7 @@ function ProviderCard({ p, active, health, onEdit, onDelete }: { p: ProviderView
           </div>
         ) : null}
       </dl>
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-[11.5px] text-muted"><span>{fundingLabel(p)}</span>{p.fallbackEligible ? <Badge>{tx('Fallback', '备用')}</Badge> : null}{p.checks?.some((c) => c.ok && checkNeedsReview(c)) ? <Badge tone="warning">{tx('Checks need review', '检测待复核')}</Badge> : null}{usageUrl(p) ? <button className="text-accent hover:underline" onClick={() => void api.openExternal(usageUrl(p)!)}>{tx('Manage usage', '管理用量')}</button> : null}</div>
 
       <div className={cn('mt-4 rounded-lg px-3 py-2', health.last?.status === 'error' ? 'bg-danger-soft' : 'bg-fg/[0.035]')}>
         <HealthLine h={health} />
@@ -931,6 +1014,7 @@ function OfficialCard({ active, gateway, health }: { active: boolean; gateway: s
 export function ProvidersPage() {
   const { state, intent, clearIntent, logs } = useStore()
   const [editing, setEditing] = useState<ProviderView | 'new' | null>(null)
+  const [reviewChecks, setReviewChecks] = useState(false)
   const [open, setOpen] = useState(false)
   const [deleting, setDeleting] = useState<ProviderView | null>(null)
   const [today, setToday] = useState<UsageStats | null>(null)
@@ -944,12 +1028,15 @@ export function ProvidersPage() {
 
   useEffect(() => {
     if (intent === 'add') {
+      setReviewChecks(false)
       setEditing('new')
       setOpen(true)
       clearIntent()
-    } else if (intent?.startsWith('edit:') && state) {
-      const target = state.providers.find((p) => p.id === intent.slice(5))
+    } else if ((intent?.startsWith('edit:') || intent?.startsWith('checks:')) && state) {
+      const review = intent.startsWith('checks:')
+      const target = state.providers.find((p) => p.id === intent.slice(review ? 7 : 5))
       if (target) {
+        setReviewChecks(review)
         setEditing(target)
         setOpen(true)
       }
@@ -1021,7 +1108,7 @@ export function ProvidersPage() {
           <span className="text-[12px] text-subtle">{tr("{0} 个预设 · 支持任意兼容接口", PRESETS.filter((p) => !p.hidden).length)}</span>
         </button>
       </div>
-      <ProviderEditor open={open} onOpenChange={setOpen} initial={editing} />
+      <ProviderEditor open={open} onOpenChange={(value) => { setOpen(value); if (!value) setReviewChecks(false) }} initial={editing} focusChecks={reviewChecks} />
       <Confirm
         open={!!deleting}
         onOpenChange={(v) => !v && setDeleting(null)}

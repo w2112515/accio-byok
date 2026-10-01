@@ -14,6 +14,11 @@ export function getLanguage(): Language {
   return language
 }
 
+/** Colocated bilingual copy for new connection and maintenance panels. */
+export function tx(english: string, chinese: string): string {
+  return language === 'en' ? english : chinese
+}
+
 /** Translate app-owned copy, interpolating values without inspecting user content. */
 export function tr(source: keyof typeof EN, ...values: unknown[]): string {
   const message = language === 'en' ? EN[source] ?? source : source

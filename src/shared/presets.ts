@@ -110,8 +110,8 @@ export const PRESETS: ProviderPreset[] = [
     keyUrl: 'https://platform.deepseek.com/api_keys',
     color: '#4D6BFE',
     monogram: 'D',
-    modelHints: ['deepseek-chat', 'deepseek-reasoner'],
-    defaults: { model: 'deepseek-chat', sendReasoningContent: true, sendSampling: true, maxOutputTokens: 8192 },
+    modelHints: [],
+    defaults: { sendReasoningContent: true, sendSampling: true, maxOutputTokens: 8192 },
   },
   {
     id: 'moonshot',

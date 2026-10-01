@@ -1,15 +1,17 @@
-import { tr } from '../../../shared/i18n.ts'
+import { tr, tx } from '../../../shared/i18n.ts'
 import { AlertTriangle, ArchiveRestore, ArrowRight, CheckCircle2, DatabaseBackup, FolderOpen, History, MoreHorizontal, Power, RefreshCw, Shuffle, Trash2, UserRound } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import type { AccioAccount, BackupInfo, MigrationReport } from '../../../shared/types.ts'
+import type { AccioAccount, BackupInfo, BackupPreview, MigrationReport } from '../../../shared/types.ts'
 import { PageHeader } from '../App.tsx'
-import { Badge, Button, Card, CardHeader, Confirm, EmptyState, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, Modal, SelectBox, Skeleton } from '../components/ui.tsx'
+import { Badge, Button, Card, CardHeader, Confirm, EmptyState, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, Modal, SelectBox, Skeleton, Switch } from '../components/ui.tsx'
 import { api } from '../lib/api.ts'
 import { fmtBytes, fmtDateTime, timeAgo } from '../lib/format.ts'
 import { useStore } from '../lib/store.tsx'
+import { BackupFreshness } from '../components/BackupFreshness.tsx'
 
 const REASON: Record<BackupInfo['reason'], { label: string; tone: 'neutral' | 'accent' | 'warning' }> = {
+  automatic: { get label() { return tx('Automatic', '自动备份') }, tone: 'accent' },
   manual: { get label() { return tr("手动") }, tone: 'accent' },
   'before-restore': { get label() { return tr("恢复前自动") }, tone: 'neutral' },
   'before-migrate': { get label() { return tr("迁移前自动") }, tone: 'neutral' },
@@ -18,6 +20,45 @@ const REASON: Record<BackupInfo['reason'], { label: string; tone: 'neutral' | 'a
 function accountLabel(accounts: AccioAccount[], id: string): string {
   const a = accounts.find((x) => x.id === id)
   return a?.name ? `${a.name}（${id}）` : id
+}
+
+function useBackupPreview(id?: string, target?: string) {
+  const [preview, setPreview] = useState<BackupPreview>()
+  const [error, setError] = useState<string>()
+  const [attempt, setAttempt] = useState(0)
+  useEffect(() => {
+    let current = true
+    setPreview(undefined); setError(undefined)
+    if (id) void api.previewBackup(id, target).then((p) => { if (current) setPreview(p) }).catch((e) => { if (current) setError(e.message) })
+    return () => { current = false }
+  }, [id, target, attempt])
+  return { preview, error, retry: () => setAttempt((n) => n + 1) }
+}
+
+function PreviewDetails({ preview, error, retry }: ReturnType<typeof useBackupPreview>) {
+  if (error) return <div role="alert" className="space-y-2 rounded-lg bg-danger-soft p-3 text-[12.5px] text-danger"><p>{error}</p><Button size="sm" onClick={retry}>{tr('重新读取')}</Button></div>
+  if (!preview) return <p role="status" className="text-[13px] text-muted">{tx('Checking file contents and databases…', '正在检查文件内容与数据库…')}</p>
+  return <div className="space-y-2 rounded-xl border border-border p-4 text-[12.5px] text-muted">
+    <p className="font-medium text-fg">{tx('Restore preview', '恢复预览')} · {preview.files} {tx('files', '个文件')} · {fmtBytes(preview.sizeBytes)}</p>
+    <p>{preview.integrity === 'sha256' ? tx('SHA-256 verified', 'SHA-256 校验通过') : tx('Legacy integrity checks', '旧版完整性检查')} · SQLite {preview.databasesChecked}</p>
+    <p>{preview.consistency === 'closed' ? tx('Captured with Accio closed', '备份时 Accio 已关闭') : tx('Cross-file consistency is unconfirmed', '跨文件一致性未确认')}</p>
+    {preview.sourceAccountId !== preview.targetAccountId ? <p>{tx('Migration preview', '迁移预演')} · {preview.filesRewritten} {tx('files rewritten', '个文件改写')} · {preview.pathsRenamed} {tx('paths renamed', '个路径更名')} · {preview.existingFiles} {tx('existing files', '个已有文件')}</p> : null}
+    {preview.warnings.map((w) => <p key={w} className="text-warning">{w}</p>)}
+  </div>
+}
+
+function RestoreDialog({ backup, onClose, onDone }: { backup: BackupInfo | null; onClose(): void; onDone(): void }) {
+  const review = useBackupPreview(backup?.id)
+  const [running, setRunning] = useState(false)
+  const [error, setError] = useState<string>()
+  useEffect(() => setError(undefined), [backup])
+  return <Modal open={!!backup} onOpenChange={(v) => { if (!v && !running) onClose() }} title={tr('恢复这份备份？')} footer={<><Button onClick={onClose} disabled={running}>{tr('取消')}</Button><Button variant="primary" disabled={!review.preview} loading={running} onClick={async () => {
+    if (!backup) return
+    setRunning(true); setError(undefined)
+    try { await api.restoreBackup(backup.id); toast.success(tr('恢复完成')); onDone(); onClose() } catch (e) { setError((e as Error).message) } finally { setRunning(false) }
+  }}>{tr('恢复')}</Button></>}>
+    <div className="space-y-4"><p className="text-[13px] text-muted">{backup ? tr('账号 {0} 的数据会回到 {1} 的状态。恢复前会自动备份当前数据，可以随时再恢复回来。', backup.accountId, fmtDateTime(backup.createdAt)) : ''}</p><PreviewDetails {...review} />{error ? <p role="alert" className="text-[13px] text-danger">{error}</p> : null}</div>
+  </Modal>
 }
 
 function MigrateDialog({
@@ -36,6 +77,7 @@ function MigrateDialog({
   const [running, setRunning] = useState(false)
   const [report, setReport] = useState<MigrationReport | null>(null)
   const [rolling, setRolling] = useState(false)
+  const review = useBackupPreview(target && backup ? backup.id : undefined, target)
 
   useEffect(() => {
     setReport(null)
@@ -91,7 +133,7 @@ function MigrateDialog({
         ) : (
           <>
             <Button onClick={onClose} disabled={running}>{tr("取消")}</Button>
-            <Button variant="primary" onClick={run} loading={running} disabled={!target}>
+            <Button variant="primary" onClick={run} loading={running} disabled={!target || !review.preview}>
               <Shuffle />
               {tr("开始迁移")}</Button>
           </>
@@ -154,6 +196,7 @@ function MigrateDialog({
             <li>{tr("• 开始前会自动完整备份目标账号，迁移后可以一键撤销。")}</li>
             <li>{tr("• 迁移前需要关闭 Accio。")}</li>
           </ul>
+          <PreviewDetails {...review} />
         </div>
       ) : null}
     </Modal>
@@ -189,7 +232,7 @@ export function SessionsPage() {
   useEffect(() => {
     void load()
     return () => { loadVersion.current++ }
-  }, [load])
+  }, [load, state?.autoBackup?.completedAt])
 
   const backupNow = async (id: string) => {
     setBusy(id)
@@ -217,12 +260,17 @@ export function SessionsPage() {
       />
       {loadError ? <Card className="mb-4 border-danger/30 p-4"><p role="alert" className="text-[13px] text-danger">{loadError}</p><p className="mt-1 text-[12px] text-muted">{accounts || backups ? tr("下方保留上次读取的列表，重新读取成功后才能操作。") : tr("尚未获得列表，请检查目录权限后重试。")}</p><Button className="mt-3" size="sm" loading={loading} onClick={() => void load()}>{tr("重新读取")}</Button></Card> : null}
       <fieldset disabled={loading || !!loadError || !!state?.busyOperation} className="min-w-0 space-y-6">
+        <Card className="space-y-3 p-5">
+          <BackupFreshness backups={backups} loading={loading} error={loadError} />
+          <div className="flex items-start justify-between gap-4"><div><h3 className="text-[14px] font-semibold">{tx('Automatic backups', '自动备份')}</h3><p className="mt-1 text-[12px] text-muted">{tx('Once a day while Accio is closed. Unchanged accounts are skipped. Manual and recovery backups are always retained.', '每天在 Accio 关闭时备份，跳过未变更账号。手动备份及恢复保护备份始终保留。')}</p></div><Switch label={tx('Automatic backups', '自动备份')} checked={state?.settings.autoBackup ?? false} onCheckedChange={(v) => void api.updateSettings({ autoBackup: v }).catch((e) => toast.error(e.message))} /></div>
+          {state?.settings.autoBackup ? <><div className="flex flex-wrap items-center gap-3"><span className="text-[12px] text-muted">{tx('Keep per account', '每个账号保留')}</span><SelectBox label={tx('Automatic backup retention', '自动备份保留数量')} value={String(state.settings.backupRetention ?? 7)} onChange={(v) => void api.updateSettings({ backupRetention: Number(v) }).catch((e) => toast.error(e.message))} options={[1, 3, 7, 14, 30].map((n) => ({ value: String(n), label: String(n) }))} /><Button size="sm" disabled={accioRunning} onClick={async () => { const result = await api.runAutoBackup(); if (result.state === 'error') toast.error(result.message); await load() }}>{tx('Run now', '立即执行')}</Button></div><p role="status" className={`text-[12px] ${state.autoBackup?.state === 'error' ? 'text-danger' : 'text-muted'}`}>{state.autoBackup?.message || tx('Waiting for the next safe backup opportunity.', '等待下一次可安全备份的时机。')}{state.autoBackup?.checkedAt ? ` · ${fmtDateTime(state.autoBackup.checkedAt)}` : ''}</p></> : null}
+        </Card>
         {accioRunning ? (
           <Card className="flex items-center gap-4 border-warning/40 bg-warning-soft/60 px-5 py-3.5">
             <AlertTriangle className="size-5 shrink-0 text-warning" />
             <div className="min-w-0 flex-1 text-[13px]">
               <span className="font-medium">{tr("Accio 正在运行。")}</span>
-              <span className="text-muted">{tr("备份可以正常进行；恢复和迁移需要先关闭 Accio，避免数据被覆盖。")}</span>
+              <span className="text-muted">{tx('Manual backups remain available, but cross-file consistency is unconfirmed. Close Accio for a reliable restore point, restoration or migration.', '可手动备份，但跨文件一致性未确认；可靠恢复点、恢复和迁移都应先关闭 Accio。')}</span>
             </div>
             <Button
               size="sm"
@@ -308,6 +356,7 @@ export function SessionsPage() {
                       <div className="flex items-center gap-2">
                         <span className="text-[13px] font-medium tabular">{fmtDateTime(b.createdAt)}</span>
                         <Badge tone={REASON[b.reason].tone}>{REASON[b.reason].label}</Badge>
+                        <span className="text-[11px] text-subtle">{b.integrity === 'sha256' ? 'SHA-256' : tx('Legacy', '旧版')} · {b.consistency === 'closed' ? tx('Accio closed', 'Accio 已关闭') : tx('Consistency unconfirmed', '一致性未确认')}</span>
                       </div>
                       <div className="truncate text-[12px] text-muted">
                         {accounts ? accountLabel(accounts, b.accountId) : b.accountId} · {b.conversations} {tr(" 个会话 · ")}{fmtBytes(b.sizeBytes)}
@@ -345,23 +394,7 @@ export function SessionsPage() {
         </Card>
       </fieldset>
 
-      <Confirm
-        open={!!restoring}
-        onOpenChange={(v) => !v && setRestoring(null)}
-        title={tr("恢复这份备份？")}
-        description={restoring ? tr("账号 {0} 的数据会回到 {1} 的状态。恢复前会自动备份当前数据，可以随时再恢复回来。", restoring.accountId, fmtDateTime(restoring.createdAt)) : ''}
-        confirmText={tr("恢复")}
-        onConfirm={async () => {
-          if (!restoring) return
-          try {
-            await api.restoreBackup(restoring.id)
-            toast.success(tr("恢复完成"), { description: tr("重新打开 Accio 即可看到恢复后的会话") })
-            await load()
-          } catch (e) {
-            toast.error(tr("恢复失败"), { description: (e as Error).message })
-          }
-        }}
-      />
+      <RestoreDialog backup={restoring} onClose={() => setRestoring(null)} onDone={() => void load()} />
       <Confirm
         open={!!deleting}
         onOpenChange={(v) => !v && setDeleting(null)}

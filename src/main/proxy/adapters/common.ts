@@ -67,7 +67,7 @@ function extractErrorMessage(text: string): string {
     const e = Array.isArray(j) ? j[0]?.error ?? j[0] : j?.error ?? j
     if (typeof e === 'string') return e
     if (e && typeof e === 'object') {
-      const msg = (e as Record<string, unknown>).message ?? (e as Record<string, unknown>).msg
+      const msg = (e as Record<string, unknown>).message ?? (e as Record<string, unknown>).msg ?? (e as Record<string, unknown>).detail
       if (typeof msg === 'string') return msg
     }
     if (typeof j?.message === 'string') return j.message
@@ -101,7 +101,9 @@ export async function ensureOk(res: Response, label: string): Promise<Response> 
         : res.status === 429
           ? tr("（触发限流或余额不足）")
           : ''
-  throw new UpstreamError(tr("{0} 返回 {1}{2}：{3}", label, res.status, hint, msg), res.status)
+  let code: string | undefined
+  try { const value = JSON.parse(text)?.error?.code; if (typeof value === 'string' && /^[a-zA-Z0-9_.-]{1,128}$/.test(value)) code = value } catch { /* Nonstandard responses still retain their diagnostic text and HTTP status. */ }
+  throw Object.assign(new UpstreamError(tr("{0} 返回 {1}{2}：{3}", label, res.status, hint, msg), res.status), { code, requestId: res.headers.get('x-request-id') ?? res.headers.get('request-id') ?? undefined })
 }
 
 export function requireBody(res: Response): ReadableStream<Uint8Array> {

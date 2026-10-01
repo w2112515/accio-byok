@@ -53,6 +53,28 @@ const accioBody = {
 }
 
 describe('Responses adapter', () => {
+  it('binds ChatGPT tool namespaces and reasoning to a registration across token rotation', async () => {
+    const p = provider('openai', { openaiApi: 'responses', authMode: 'openai-oauth', credentialId: 'registration-one', baseUrl: 'https://api.openai.com/v1', sendSampling: true })
+    const req = parseAccioRequest(accioBody)
+    const body = buildResponsesBody(req, { provider: p, model: p.model })
+    assert.equal(body.max_output_tokens, undefined)
+    assert.equal(body.temperature, undefined)
+    assert.equal(body.tools[0].type, 'namespace')
+    assert.equal(body.tools[0].name, 'accio')
+    assert.ok(body.input.filter((i: any) => i.type === 'function_call').every((i: any) => i.namespace === 'accio'))
+    const reasoning = { type: 'reasoning', id: 'rs', encrypted_content: 'fixture-encrypted-reasoning', summary: [] }
+    const call = { type: 'function_call', call_id: 'call_2', namespace: 'accio', name: 'get_weather', arguments: '{"city":"深圳"}' }
+    let output = ''
+    const result = await streamByok({ req, provider: p, model: p.model, signal: new AbortController().signal, write: (s) => { output += s }, fetch: async () => sseResponse([{ type: 'response.completed', response: { status: 'completed', output: [reasoning, call] } }]) })
+    assert.equal(result.status, 'ok')
+    const history = parseAccioRequest({ ...accioBody, contents: [accioBody.contents[0], replayAssistant(consume(output)), { role: 'user', parts: [{ function_response: { id: 'call_2', name: 'get_weather', response_json: '{"result":"晴"}' } }] }] })
+    const rotated = buildResponsesBody(history, { provider: { ...p, apiKey: 'rotated-access' }, model: p.model })
+    assert.ok(rotated.input.some((i: any) => i.type === 'reasoning'))
+    const different = buildResponsesBody(history, { provider: { ...p, credentialId: 'registration-two' }, model: p.model })
+    assert.ok(!different.input.some((i: any) => i.type === 'reasoning'))
+    const failed = await streamByok({ req, provider: p, model: p.model, signal: new AbortController().signal, write: () => {}, fetch: async () => sseResponse([{ type: 'response.failed', response: { error: { code: 'subscription_sharing_usage_limit_exceeded', message: 'fixture quota' } } }]) })
+    assert.equal(failed.errorCode, 'subscription_sharing_usage_limit_exceeded')
+  })
   it('round-trips encrypted reasoning, image input and tool results through Accio without storing server state', async () => {
     const p = provider('openai', { openaiApi: 'responses' })
     const reasoning = { type: 'reasoning', id: 'rs_1', encrypted_content: 'opaque-cipher', summary: [{ type: 'summary_text', text: 'checking' }] }

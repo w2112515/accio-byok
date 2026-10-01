@@ -1,5 +1,58 @@
 # Accio BYOK：实施结果与验收
 
+## 1.4.1: Connection and recovery clarity / 状态与恢复体验已打磨
+
+2026-10-01. The approved follow-up is implemented and verified locally, preserving the existing design. Current-connection evidence is isolated; capability checks older than 30 days prompt manual review; the latest completed snapshot captured with Accio closed is read from disk. Real-account acceptance stays pending. Version 1.4.1 is a local build, not a published release.
+
+### Changes / 改动
+
+- **连接归属：**旧版 1.4.0 便携包已在隔离目录复现：同一供应商记录更改地址、模型不变后，仍展示旧请求成功与 94% 上下文占用。现在请求在发起时记录连接身份；上下文、最近请求、首次接入验证及用量快照只使用匹配连接的数据。变更后等待新请求，名称、备注及价格编辑保留匹配记录，历史日志不删除。
+- **旧配置兼容：**实际表单复核暴露了“省略默认选项”与“显式填写默认选项”被误判成不同连接的问题。现按相同默认行为计算身份，手动复核成功后当前表单记录立即更新，首页提醒同步清除。API Key 模式始终包含 Key 的变化，OAuth 刷新则保持同一授权连接身份。无法匹配新身份的旧记录不当作当前验证，必要时手动重新检测。
+- **检测复核：**超过 30 天的成功记录显示“曾通过 · 建议复核”，保留原日期与结果；这是提醒期限，不是服务失效判定。首页“复核检测”直接打开、展开并定位相关记录。切换前也提醒缺少近期多轮工具证据，不自动发请求或强制重测。
+- **备份时间：**首页与会话备份页显示落盘快照的实际时间和所属账号，重启后保留。摘要只表示各账号中最新一份关闭 Accio 后的快照，明确其他账号可能更早或尚无备份；超过七天提示按近期工作复核。等待关闭、读取失败、没有快照及已经完成分别展示，开启自动计划不冒充备份成功。
+- **首页表达：**将最近请求、备份时间与上下文依据放在同一现有卡片内；错误和操作可以换行。连接说明兼容 Key 与 OAuth，保留原导航、色彩和组件。
+
+### Verification / 验证
+
+- Existing 48 tests passed. After the final identity-normalization fix, the 11 affected proxy/security checks passed again. Type checking and the final build passed. No new test suite, dependency or framework was added.
+- 原有 48 项检查通过；最终连接身份修正后复验相关 11 项代理与安全检查，全部通过。类型检查、构建及打包通过；没有新增自动化测试套件或依赖。前端体积警告保留，未扩展为性能重构。
+- Isolated Electron runs reproduced the old defect and verified endpoint/key changes, preserved metadata-only edits, stale check/backup reminders, and backup read failures. The stale reminder walkthrough caused zero new mock-provider generation requests. Fixture dates were adjusted only in the isolated directory; the system clock and real account data were unchanged.
+- 实际便携包完整走通：重启读取加密配置及连接身份 → 读取磁盘备份时间 → 由首页进入复核 → 点击工具多轮及文本检测 → 表单记录即时更新、首页旧提醒消失 → 新建备份更新时间 → 改连接后旧状态隐藏 → 新代理请求 HTTP 200 后显示匹配上下文。历史日志保留；默认诊断未包含合成提示词、测试 Key 或连接指纹。
+- 已检查 980×660 中英文首页、备份状态和检测表单，按钮可达、重要提示可读。备份目录读取失败明确报错，未显示成“尚无备份”；恢复测试目录后最终便携包重新读取成功。这不等同于真实 Accio 打开恢复会话的验收。
+- Final artifacts are in `release/1.4.1`. The extracted installer `app.asar` matches `win-unpacked`; all six packaged build files match the final build, package version is 1.4.1, and `SHA256SUMS.txt` records both executables. The final portable walkthrough completed after the last source change.
+
+真实 OAuth、账号资格、付费调用、真实 Accio 恢复后继续工作、Windows 覆盖安装和登录自启仍待单独验收。安装器本轮核对内容一致性，没有执行安装。本次源码提交包含 1.4.0 功能与 1.4.1 打磨，安装包尚未发布为 Release；本地模拟服务已结束。
+
+## 1.4.0: Local delivery verified / 本地交付已验证
+
+2026-10-01. The approved six-part implementation is complete for local delivery, preserving the current English-first bilingual design and Electron/proxy/session architecture. At the user's direction, this round covers implementation and local simulation; real accounts will be verified separately. Version 1.4.0 has not been published or pushed.
+
+已按确认的完整方案完成六项能力，并保留现有前端设计、英文优先双语界面和技术栈。依用户后续限定，本轮完成实现与本地模拟验证，真实账号稍后验收。1.4.0 仅本地交付，未提交 Git、推送或发布。
+
+### Implemented / 已实现
+
+1. **Provider access / 供应商接入：**保留既有 API 与中转入口；新增 OpenAI 官方 ChatGPT 授权和 OpenRouter OAuth，以及独立的 Kimi Code、MiniMax、GLM、百炼订阅 Key 入口和适用范围提示。授权凭据在主进程加密存储，官方凭据限定官方地址；新授权校验成功后才替换旧状态。订阅渠道需确认适用范围，不代表所有 Accio 任务均获供应商许可。
+2. **Connection evidence and switching / 连接证据与切换：**文本、工具、图片、多轮工具结果分别检测并记录；连接或模型变化后相关证据失效。可标记备用连接，切换前查看数据接收方、费用与能力差异，只影响后续请求；不重放在途请求或自动切入付费渠道。
+3. **Context and diagnostics / 上下文与诊断：**展示上游实际用量或明确标注的文本估算、窗口来源与核对日期、80% 阈值提示，以及缓存读写用量和可定位的错误。未知值保留未知；估算不保证覆盖图片、音频及不透明推理内容，也没有暗中裁剪历史或接管 Accio 原生压缩。
+4. **Billing and provider usage / 计费与额度：**区分 API、订阅与本地请求，只有 API 请求进入 API 费用估算及定价覆盖率。支持公开接口提供的额度或余额快照，其余引导供应商控制台。MiniMax 未说明单位的字段按原名展示，不推测 token 数或重置时间；百炼订阅入口按已核对限制禁用 API 探测。
+5. **Session recovery / 会话恢复：**可选每日自动备份变化账号，每账号保留 1–30 份自动快照，保留手动和保护备份；失败后等待 15 分钟再尝试。恢复与迁移前展示范围及风险，在暂存副本校验 SHA-256 和 SQLite，写入要求 Accio 关闭并建立保护备份；未知结构停止，不全局替换正文中的账号数字。
+6. **Updates and maintenance / 更新与维护：**查询发布说明和预览版状态，依据发布摘要校验下载，显式触发安装并保存配置备份。配置恢复要求版本一致，保留当前配置并重置自动启动、自动备份及代理选择供复核，不恢复 OAuth 凭据。诊断先预览后本地导出，默认不含会话，最多三段会话需显式选入并复核隐私内容。
+
+### Verification / 实际验证
+
+- **Checks:** all 48 tests, TypeScript checks and the final package build passed. Ten focused tests were added to the 38-test baseline for authorization, credential boundaries, verified downloads, diagnostic redaction, usage isolation, and recovery. No new test framework or runtime dependency was added.
+- **定向检查：**最终 48/48 通过，类型检查及打包通过。针对授权回调、令牌刷新与账号校验、凭据地址隔离、摘要校验、诊断脱敏、额度隔离、配置恢复及快照损坏等高风险行为补充最小验证；没有新增测试框架或运行时依赖。
+- **Packaged runtime:** isolated Electron and portable runs passed text, tool, image and tool-result round trips against a local mock provider, and an actual local proxy request returned HTTP 200. The final portable reopened encrypted credentials and four saved capability checks after restart. Restored fixture sessions were readable through the app; SHA-256 integrity and account counts were confirmed. Default diagnostics excluded the synthetic key, prompt and private name. A real read-only release query correctly reported the published 1.3.0 preview as older than this local build.
+- **运行与界面：**本地模拟供应商配合真实 Electron 和便携包验证四类检测、实际代理请求、加密配置跨进程读取、恢复后的测试会话读取、诊断隐私边界及更新查询。所有应用与 Accio 数据均位于隔离目录。已检查 980×660 下中英文界面、授权表单、上下文来源/日期与 94% 用量提示、恢复预览和维护操作；没有把模拟供应商结果写成真实服务兼容结论。
+- **Billing:** a separate three-request fixture confirmed that API, subscription and local requests were counted separately, with only the API request entering estimated cost and pricing coverage.
+- **Packages:** installer and portable executables are in `release/1.4.0`, with `SHA256SUMS.txt`. The installer's extracted `app.asar` exactly matches `win-unpacked`; all six packaged build files match the final build output, and the package reports 1.4.0. The final portable was run after the last source change. Temporary mock and app processes have stopped.
+
+### Remaining acceptance / 待真实环境验收
+
+Real OAuth sign-in, account eligibility, paid inference, real Accio consumption of restored sessions, Windows upgrade installation and login startup remain untested. Installer payload verification is not an installation test. The installed Accio version was read as 0.33.0.0; this is not broad version-compatibility certification. Existing frontend bundle-size warnings remain. No real account data was modified and no paid inference was performed.
+
+真实 OAuth 登录、账号/套餐资格、付费模型调用、真实 Accio 打开恢复会话、覆盖安装与登录自启尚未实测。安装器内容一致性不能替代实际安装验收；本机读到 Accio 0.33.0.0，不据此声称兼容所有版本。前端包体积警告保留，未扩大为性能改造。原生自动压缩仍属于单独评审范围。本轮没有修改真实账号数据或调用付费模型。
+
 ## 1.3.0: English-first bilingual app / 英文优先双语版
 
 2026-10-01. The app defaults to English and offers Simplified Chinese in the top bar and Settings. The same saved preference controls navigation, forms, preset descriptions, date formatting, tray menus, native dialogs, and new app errors. Existing provider names, notes, session content, historical logs, and upstream text keep their original language. No localization dependency was added. The installer offers English and Simplified Chinese independently of the app preference.

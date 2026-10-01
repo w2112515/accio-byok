@@ -3,6 +3,24 @@
 export type ProviderKind = 'openai' | 'anthropic' | 'gemini'
 
 export type ThinkingMode = 'off' | 'adaptive' | 'budget'
+export type AuthMode = 'api-key' | 'subscription-key' | 'openai-oauth' | 'openrouter-oauth' | 'none'
+export type FundingSource = 'api' | 'subscription' | 'local'
+
+export interface AuthorizationView {
+  id: string
+  service: 'openai' | 'openrouter'
+  label: string
+  connected: boolean
+  planEnabled: boolean
+  expiresAt?: number
+  firstSignIn?: boolean
+  pauseReason?: string
+}
+
+export interface CapabilityCheck extends TestResult {
+  scope: TestScope
+  checkedAt: number
+}
 
 export interface ProviderPricing {
   /** USD per 1M input tokens (uncached). */
@@ -38,6 +56,13 @@ export interface Provider {
   allowInsecureHttp?: boolean
   /** Preset this provider was created from, used for the icon/colour. */
   presetId?: string
+  authMode?: AuthMode
+  credentialId?: string
+  fundingSource?: FundingSource
+  /** Explicit acknowledgement of the provider's personal-use subscription restrictions. */
+  subscriptionAcknowledged?: boolean
+  /** A manually selected fallback candidate; never replays an in-flight request. */
+  fallbackEligible?: boolean
   baseUrl: string
   /** Encrypted at rest; the renderer only ever sees a masked value. */
   apiKey: string
@@ -77,6 +102,10 @@ export interface ProviderView extends Omit<Provider, 'apiKey'> {
   hasApiKey: boolean
   keyError?: string
   protection?: ConnectionProtection
+  authorization?: AuthorizationView
+  checks?: CapabilityCheck[]
+  /** Main-process identity of the saved connection; never accepted from form input. */
+  connectionFingerprint?: string
 }
 
 export interface ConnectionProtection {
@@ -104,6 +133,8 @@ export interface AppSettings {
   /** Stop a BYOK request after this many seconds without a valid upstream event. */
   upstreamIdleTimeoutSeconds?: number
   theme: 'system' | 'light' | 'dark'
+  autoBackup?: boolean
+  backupRetention?: number
 }
 
 export const OFFICIAL_PROVIDER_ID = 'official'
@@ -134,6 +165,8 @@ export interface RequestLog extends UsageNumbers {
   mode: 'byok' | 'official'
   providerId: string
   providerName: string
+  /** Connection captured when this request started. Missing on older logs. */
+  connectionFingerprint?: string
   accioModel: string
   targetModel: string
   status: RequestStatus
@@ -150,6 +183,15 @@ export interface RequestLog extends UsageNumbers {
   costComplete?: boolean
   pricing?: ProviderPricing
   pricingUpdatedAt?: number
+  fundingSource?: FundingSource
+  contextWindow?: number
+  estimatedInputTokens?: number
+  contextWindowKind?: 'context' | 'input'
+  contextWindowSource?: ModelInfo['source']
+  contextWindowCheckedAt?: number
+  contextEstimateIncomplete?: boolean
+  errorCode?: string
+  requestId?: string
 }
 
 export interface RequestCapture {
@@ -167,6 +209,9 @@ export interface UsageBucket extends UsageNumbers {
   estimatedRequests?: number
   fullyEstimatedRequests?: number
   byokRequests?: number
+  apiRequests?: number
+  subscriptionRequests?: number
+  localRequests?: number
   cacheReportedRequests?: number
   cacheReportedInputTokens?: number
   cacheReportedTokens?: number
@@ -184,6 +229,7 @@ export interface UsageStats {
 }
 
 export interface AccioStatus {
+  version?: string
   installed: boolean
   exePath: string
   running: boolean
@@ -196,6 +242,19 @@ export interface AccioStatus {
   operation?: 'starting' | 'stopping' | 'direct'
   error?: string
 }
+
+export interface UpdateInfo {
+  version: string
+  newer: boolean
+  prerelease: boolean
+  checkedAt: number
+  notes: string
+  pageUrl: string
+  assets: { name: string; size: number; sha256?: string }[]
+}
+
+export interface DiagnosticPreview { id: string; content: string; includesContent: boolean }
+export interface ProviderUsageSnapshot { checkedAt: number; sourceUrl: string; fields: { label: string; value: string }[]; note: string }
 
 export interface ProxyStatus {
   running: boolean
@@ -223,7 +282,9 @@ export interface BackupInfo {
   sizeBytes: number
   fileCount: number
   conversations: number
-  reason: 'manual' | 'before-restore' | 'before-migrate'
+  reason: 'manual' | 'automatic' | 'before-restore' | 'before-migrate'
+  consistency?: 'closed' | 'live'
+  integrity?: 'sha256' | 'legacy'
   note?: string
   path: string
 }
@@ -240,6 +301,29 @@ export interface MigrationReport {
   warnings: string[]
 }
 
+export interface BackupPreview {
+  id: string
+  sourceAccountId: string
+  targetAccountId: string
+  files: number
+  sizeBytes: number
+  integrity: 'sha256' | 'legacy'
+  consistency: 'closed' | 'live' | 'unknown'
+  databasesChecked: number
+  filesRewritten: number
+  pathsRenamed: number
+  existingFiles: number
+  warnings: string[]
+}
+
+export interface AutoBackupStatus {
+  state: 'disabled' | 'waiting' | 'running' | 'ok' | 'error'
+  checkedAt?: number
+  completedAt?: number
+  lastBackupIds?: string[]
+  message?: string
+}
+
 export interface AccioModelInfo {
   code: string
   name: string
@@ -247,7 +331,7 @@ export interface AccioModelInfo {
   visible: boolean
 }
 
-export type TestScope = 'text' | 'tools' | 'image'
+export type TestScope = 'text' | 'tools' | 'image' | 'multiturn'
 
 export interface TestResult {
   ok: boolean

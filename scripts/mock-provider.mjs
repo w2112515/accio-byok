@@ -40,24 +40,26 @@ http
         const send = (o) => res.write(`data: ${JSON.stringify(o)}\n\n`)
         await new Promise((r) => setTimeout(r, 350))
         if (req.url.endsWith('/responses')) {
-          const isTool = tools?.some((t) => t.name === 'connection_probe')
+          const continued = input?.some((m) => m.type === 'function_call_output' && String(m.output).includes('violet-73'))
+          const isTool = !continued && tools?.some((t) => t.name === 'connection_probe')
           const isImage = input?.some((m) => Array.isArray(m.content) && m.content.some((p) => p.type === 'input_image'))
           const output = isTool
             ? [{ type: 'function_call', id: 'fc_probe', call_id: 'probe_1', name: 'connection_probe', arguments: '{"value":"pong"}', status: 'completed' }]
-            : [{ type: 'message', id: 'msg_probe', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: isImage ? 'red' : `你好！这是通过 Responses 接入的 ${model}。`, annotations: [] }] }]
+            : [{ type: 'message', id: 'msg_probe', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: continued ? 'violet-73' : isImage ? 'red' : `你好！这是通过 Responses 接入的 ${model}。`, annotations: [] }] }]
           send({ type: 'response.output_item.done', output_index: 0, item: output[0] })
           send({ type: 'response.completed', response: { status: 'completed', output, usage: { input_tokens: 100, output_tokens: 20, input_tokens_details: { cached_tokens: 50 } } } })
           res.end()
           return
         }
-        if (tools?.some((t) => t.function?.name === 'connection_probe')) {
+        const continued = messages?.some((m) => m.role === 'tool' && String(m.content).includes('violet-73'))
+        if (!continued && tools?.some((t) => t.function?.name === 'connection_probe')) {
           send({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'probe_1', type: 'function', function: { name: 'connection_probe', arguments: '{"value":"pong"}' } }] } }] })
           send({ choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] })
           res.end('data: [DONE]\n\n')
           return
         }
         const isImage = messages?.some((m) => Array.isArray(m.content) && m.content.some((p) => p.type === 'image_url'))
-        for (const t of isImage ? ['red'] : ['你好！', '我是', `通过 Accio BYOK 接入的 ${model}。`]) {
+        for (const t of continued ? ['violet-73'] : isImage ? ['red'] : ['你好！', '我是', `通过 Accio BYOK 接入的 ${model}。`]) {
           send({ choices: [{ index: 0, delta: { content: t } }] })
           await new Promise((r) => setTimeout(r, 120))
         }

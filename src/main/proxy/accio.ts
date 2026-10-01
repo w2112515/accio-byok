@@ -219,6 +219,8 @@ export type AdapterEvent =
 
 export class UpstreamError extends Error {
   status: number
+  code?: string
+  requestId?: string
   constructor(message: string, status = 502) {
     super(message)
     this.name = 'UpstreamError'

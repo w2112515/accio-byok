@@ -12,6 +12,9 @@ import { containsWrappedSignature, parseAccioRequest, stripWrappedSignatures } f
 import type { FetchLike } from './adapters/common.ts'
 import { hostOf } from './adapters/common.ts'
 import { resolveTargetModel, streamByok } from './byok.ts'
+import { usableModelInfo } from '../../shared/model-info.ts'
+import { estimateInput } from './context.ts'
+import { connectionFingerprint } from '../connection-checks.ts'
 
 export const GENERATE_PATH = '/api/adk/llm/generateContent'
 const HEALTH_PATH = '/__accio_switch/health'
@@ -20,6 +23,7 @@ export type Target = { mode: 'official' } | { mode: 'byok'; provider: Provider }
 
 export interface ProxyDeps {
   resolveTarget(): Target
+  prepareProvider?(provider: Provider): Promise<Provider>
   upstream(): string
   fetch: FetchLike
   onLog(entry: Omit<RequestLog, 'id' | 'costUsd'>, capture?: { request: unknown; upstreamRequest?: unknown; events: string[] }, pricing?: ProviderPricing): void
@@ -300,7 +304,12 @@ export class ProxyServer {
     if (target.mode === 'official') return this.officialGenerate(req, res, json, started)
 
     const accioReq = parseAccioRequest(json)
-    const provider = target.provider
+    let provider = target.provider
+    const connection = connectionFingerprint(provider)
+    try { if (this.deps.prepareProvider) provider = await this.deps.prepareProvider(provider) } catch (e) {
+      this.deps.onLog({ ts: started, mode: 'byok', providerId: provider.id, providerName: provider.name, connectionFingerprint: connection, accioModel: accioReq.model, targetModel: resolveTargetModel(provider, accioReq.model), status: 'error', notSent: true, durationMs: Date.now() - started, toolCalls: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0, reasoningTokens: 0, error: e instanceof Error ? e.message : String(e), fundingSource: provider.fundingSource })
+      throw e
+    }
     const model = resolveTargetModel(provider, accioReq.model)
     const capture = this.deps.debugCapture() ? { request: json, upstreamRequest: undefined as unknown, events: [] as string[] } : undefined
     let captureBytes = 0
@@ -350,6 +359,7 @@ export class ProxyServer {
         mode: 'byok',
         providerId: provider.id,
         providerName: provider.name,
+        connectionFingerprint: connection,
         accioModel: accioReq.model,
         targetModel: model,
         status: result.status,
@@ -363,10 +373,18 @@ export class ProxyServer {
         conversationId: accioReq.conversationId,
         agentId: accioReq.agentId,
         pricingUpdatedAt: provider.pricingUpdatedAt,
+        fundingSource: provider.fundingSource ?? 'api',
+        contextWindow: model === provider.model ? usableModelInfo(provider)?.contextWindow : undefined,
+        contextWindowKind: model === provider.model ? usableModelInfo(provider)?.windowKind : undefined,
+        contextWindowSource: model === provider.model ? usableModelInfo(provider)?.source : undefined,
+        contextWindowCheckedAt: model === provider.model ? usableModelInfo(provider)?.checkedAt : undefined,
+        ...estimateInput(accioReq),
+        errorCode: result.errorCode,
+        requestId: result.requestId,
         ...result.usage,
       },
       capture,
-      provider.pricing && model === (provider.pricingModel ?? provider.model) ? {
+      provider.fundingSource !== 'subscription' && provider.pricing && model === (provider.pricingModel ?? provider.model) ? {
         ...provider.pricing,
         cacheWriteInput: provider.pricing.cacheWriteInput ?? (provider.kind === 'anthropic' && hostOf(provider.baseUrl) === 'api.anthropic.com' && provider.pricing.input !== undefined ? provider.pricing.input * 1.25 : provider.pricing.input),
       } : undefined,

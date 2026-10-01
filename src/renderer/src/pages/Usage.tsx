@@ -1,4 +1,7 @@
-import { getLanguage, tr } from '../../../shared/i18n.ts'
+import { getLanguage, tr, tx } from '../../../shared/i18n.ts'
+import { requestDiagnosis } from '../../../shared/diagnostics.ts'
+import { fundingLabel, usageUrl } from '../../../shared/provider-access.ts'
+import { ContextStatus } from '../components/ContextStatus.tsx'
 import { Activity, Copy, MoreHorizontal, Search, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
@@ -42,6 +45,9 @@ function Detail({ log, onClose }: { log: RequestLog | null; onClose: () => void 
     return () => { current = false }
   }, [log])
   if (!log) return null
+  const diagnosis = requestDiagnosis(log)
+  const loggedProvider = state?.providers.find((p) => p.id === log.providerId)
+  const manageUrl = loggedProvider ? usageUrl(loggedProvider) : undefined
   const rows: [string, React.ReactNode][] = [
     [tr("时间"), fmtDateTime(log.ts)],
     [tr("模式"), log.mode === 'byok' ? `BYOK · ${log.providerName}` : tr("Accio 官方")],
@@ -57,7 +63,11 @@ function Detail({ log, onClose }: { log: RequestLog | null; onClose: () => void 
     [tr("输出 Token"), log.usageReported === false ? tr("未报告") : `${fmtNumber(log.outputTokens)}${log.reasoningTokens ? tr("（思考 {0}）", fmtNumber(log.reasoningTokens)) : ''}`],
     [tr("工具调用"), String(log.toolCalls)],
     [tr("结束原因"), log.finishReason ?? '—'],
-    [log.costComplete === false && log.costUsd !== undefined ? tr("已估算部分") : tr("预估花费"), log.costUsd === undefined ? tr("未知（未设置完整单价或缺少用量）") : fmtCost(log.costUsd)],
+    [tx('Billing source', '计费来源'), log.mode === 'official' ? tr('Accio 官方') : fundingLabel({ fundingSource: log.fundingSource })],
+    [tx('Error code', '错误代码'), log.errorCode || '—'],
+    [tx('Provider request ID', '供应商请求 ID'), log.requestId || '—'],
+    [tx('Recorded context window', '记录的上下文窗口'), log.contextWindow ? fmtTokens(log.contextWindow) : tx('Unknown', '未知')],
+    [log.costComplete === false && log.costUsd !== undefined ? tr("已估算部分") : tr("预估花费"), log.fundingSource === 'subscription' ? tx('Plan / extra usage · see provider billing', '套餐 / 额外用量 · 以供应商账单为准') : log.fundingSource === 'local' ? tx('Local model', '本地模型') : log.costUsd === undefined ? tr("未知（未设置完整单价或缺少用量）") : fmtCost(log.costUsd)],
     [tr("单价来源"), log.pricing ? tr("本次请求时保存的配置{0}", log.pricingUpdatedAt ? ` · ${fmtDateTime(log.pricingUpdatedAt)}` : tr(" · 更新时间未记录")) : tr("未记录")],
     [tr("会话"), <span className="font-mono text-[11.5px]">{log.conversationId ?? '—'}</span>],
   ]
@@ -69,11 +79,15 @@ function Detail({ log, onClose }: { log: RequestLog | null; onClose: () => void 
     <Sheet open={!!log} onOpenChange={(v) => !v && onClose()} title={log.targetModel || log.accioModel || tr("请求详情")}>
       {log.error ? (
         <div className="mb-4 rounded-xl border border-danger/30 bg-danger-soft px-4 py-3">
+          <p className="mb-1 font-medium text-danger">{diagnosis.label}</p>
+          <p className="mb-2 text-[12px] text-muted">{diagnosis.action}</p>
           <p className="text-[13px] leading-relaxed text-danger" data-selectable>
             {log.error.replace(/^\[Accio (?:Switch|BYOK)\]\s*/, '')}
           </p>
           {log.mode === 'byok' ? (
             <div className="mt-3 flex flex-wrap gap-2">
+              {manageUrl ? <Button size="sm" onClick={() => void api.openExternal(manageUrl)}>{tx('Manage usage', '管理用量')}</Button> : null}
+              {state?.providers.filter((p) => p.fallbackEligible && p.id !== state.activeProviderId).map((p) => <Button size="sm" key={p.id} onClick={() => void switchTo(p.id, p.name)}>{tx('Next request', '下次请求')} → {p.name}</Button>)}
               {state?.providers.some((p) => p.id === log.providerId) ? (
                 <Button
                   size="sm"
@@ -220,10 +234,12 @@ export function UsagePage() {
             <KpiCell label={tr("成功率")} value={successRate !== undefined ? `${successRate.toFixed(successRate === 100 ? 0 : 1)}%` : '—'} sub={t ? tr("{0} 次失败 · {1} 次取消", t.errors, t.aborted ?? 0) : undefined} />
             <KpiCell label={tr("已报告输入")} value={t ? fmtTokens(t.inputTokens) : '—'} sub={t?.cacheReportedInputTokens ? tr("有报告的请求命中 {0}%", Math.round(((t.cacheReportedTokens ?? 0) / t.cacheReportedInputTokens) * 100)) : tr("缓存命中未报告")} />
             <KpiCell label={tr("输出 Token")} value={t ? fmtTokens(t.outputTokens) : '—'} sub={t && t.reasoningTokens ? tr("思考 {0}", fmtTokens(t.reasoningTokens)) : undefined} />
-            <KpiCell label={tr("已估算花费")} value={t?.estimatedRequests ? fmtCost(t.costUsd) : '—'} sub={t ? tr("完整计价 {0} / {1} 次 BYOK", t.fullyEstimatedRequests ?? 0, t.byokRequests ?? 0) : undefined} />
+            <KpiCell label={tr("已估算花费")} value={t?.estimatedRequests ? fmtCost(t.costUsd) : '—'} sub={t ? `${t.fullyEstimatedRequests ?? 0} / ${t.apiRequests ?? 0} ${tx('API requests priced', '次 API 完整计价')}` : undefined} />
           </div>
         </Card>
+        {t ? <p className="text-[12px] text-muted">API {t.apiRequests ?? 0} · {tx('Subscription', '订阅')} {t.subscriptionRequests ?? 0} · {tx('Local', '本地')} {t.localRequests ?? 0}</p> : null}
         <p className="text-[12px] leading-relaxed text-subtle">{tr("费用仅合计已有单价和用量的部分；缺少数据不代表免费，实际账单以供应商为准。缓存读取与写入分别计费；允许缓存不等于每次命中，压缩或更换前缀后可能重新写入。")}</p>
+        <Card><ContextStatus /></Card>
 
         <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[1fr_320px]">
           <Card>

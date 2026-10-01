@@ -1,4 +1,4 @@
-import { tr } from '../shared/i18n.ts'
+import { tr, tx } from '../shared/i18n.ts'
 import { EventEmitter } from 'node:events'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -37,11 +37,15 @@ export function defaultSettings(overrides: Partial<AppSettings> = {}): AppSettin
     debugCapture: false,
     upstreamIdleTimeoutSeconds: 180,
     theme: 'system',
+    autoBackup: false,
+    backupRetention: 7,
     ...overrides,
   }
 }
 
 export function validateSettings(settings: AppSettings, loadingLegacy = false): AppSettings {
+  if (settings.autoBackup !== undefined && typeof settings.autoBackup !== 'boolean') throw new Error(tx("Invalid automatic backup setting", "自动备份设置无效"))
+  if (settings.backupRetention !== undefined && (!Number.isInteger(settings.backupRetention) || settings.backupRetention < 1 || settings.backupRetention > 30)) throw new Error(tx("Keep between 1 and 30 automatic backups per account", "每个账号可保留 1 到 30 份自动备份"))
   const language = settings.language ?? 'en'
   if (language !== 'en' && language !== 'zh-CN') throw new Error(tr('语言设置无效'))
   if (!Number.isInteger(settings.proxyPort) || settings.proxyPort < 1024 || settings.proxyPort > 65535) throw new Error(tr("代理端口必须是 1024–65535 的整数"))
@@ -122,6 +126,23 @@ export class ConfigStore extends EventEmitter {
 
   assertWritable(): void {
     if (this.loadError) throw new Error(this.loadError)
+  }
+
+  restoreSnapshot(raw: string): void {
+    this.assertWritable()
+    const temp = `${this.file}.restore-check-${Date.now()}`
+    try {
+      fs.writeFileSync(temp, raw, { flag: 'wx' })
+      const candidate = new ConfigStore(temp, this.box, this.defaults)
+      if (candidate.loadError || candidate.providerViews().some((p) => p.keyError)) throw new Error(tx("Backup configuration or encrypted keys could not be read", "无法读取备份配置或加密密钥"))
+      // Resume deliberately after restoring: do not launch Accio or create backups automatically.
+      candidate.config.settings.launchAccioOnStart = false
+      candidate.config.settings.autoBackup = false
+      candidate.config.activeProviderId = OFFICIAL_PROVIDER_ID
+      if (fs.existsSync(this.file)) fs.copyFileSync(this.file, `${this.file}.before-restore-${Date.now()}.bak`, fs.constants.COPYFILE_EXCL)
+      this.config = candidate.config
+      this.save()
+    } finally { fs.rmSync(temp, { force: true }) }
   }
 
   /** Explicit recovery only; resetting first preserves the unreadable file byte-for-byte. */
@@ -226,7 +247,7 @@ export class ConfigStore extends EventEmitter {
       createdAt: existing?.createdAt ?? Date.now(),
       modelOverrides: input.modelOverrides ?? {},
       apiKey: input.apiKey !== undefined ? input.apiKey : this.reveal(existing?.apiKey ?? ''),
-      extraHeaders: input.extraHeaders ?? (existing ? this.revealHeaders(existing) : undefined),
+      extraHeaders: input.authMode?.endsWith('-oauth') || input.authMode === 'subscription-key' ? undefined : input.extraHeaders ?? (existing ? this.revealHeaders(existing) : undefined),
     }
   }
 
@@ -235,7 +256,7 @@ export class ConfigStore extends EventEmitter {
     input = normalizeProviderInput(input, true)
     const idx = input.id ? this.config.providers.findIndex((p) => p.id === input.id) : -1
     const prev = idx >= 0 ? this.config.providers[idx] : undefined
-    const apiKey = input.apiKey !== undefined ? (input.apiKey ? this.box.encrypt(input.apiKey.trim()) : '') : (prev?.apiKey ?? '')
+    const apiKey = input.authMode?.endsWith('-oauth') || input.authMode === 'none' ? '' : input.apiKey !== undefined ? (input.apiKey ? this.box.encrypt(input.apiKey.trim()) : '') : (prev?.apiKey ?? '')
     const next: StoredProvider = {
       ...input,
       id: prev?.id ?? newId(),
@@ -245,7 +266,7 @@ export class ConfigStore extends EventEmitter {
       model: input.model.trim(),
       modelOverrides: Object.fromEntries(Object.entries(input.modelOverrides ?? {}).filter(([k, v]) => k.trim() && v.trim())),
       apiKey,
-      extraHeaders: input.extraHeaders ?? (prev ? this.revealHeaders(prev) : undefined),
+      extraHeaders: input.authMode?.endsWith('-oauth') || input.authMode === 'subscription-key' ? undefined : input.extraHeaders ?? (prev ? this.revealHeaders(prev) : undefined),
     }
     if (idx >= 0) this.config.providers[idx] = next
     else this.config.providers.push(next)

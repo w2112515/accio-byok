@@ -4,6 +4,19 @@ import { it } from 'node:test'
 import { protectedFetch, redactProviderError } from '../src/main/proxy/request-policy.ts'
 import { normalizeProviderInput } from '../src/shared/provider-input.ts'
 import { defaultSettings, validateSettings } from '../src/main/config.ts'
+import { SUBSCRIPTION_ROUTES } from '../src/shared/provider-access.ts'
+
+it('keeps subscription credentials on acknowledged official routes and rejects renderer evidence', () => {
+  const input = { name: 'Subscription', kind: 'openai' as const, model: 'm', modelOverrides: {}, apiKey: 'fixture', openaiApi: 'chat' as const, authMode: 'subscription-key' as const }
+  for (const [presetId, routes] of Object.entries(SUBSCRIPTION_ROUTES)) for (const route of routes) {
+    assert.throws(() => normalizeProviderInput({ ...input, presetId, baseUrl: route.baseUrl }))
+    const saved = normalizeProviderInput({ ...input, presetId, baseUrl: route.baseUrl, subscriptionAcknowledged: true, checks: [{ ok: true }], encryptedHeaders: 'forged' } as any)
+    assert.equal(saved.fundingSource, 'subscription')
+    assert.ok(!('checks' in saved) && !('encryptedHeaders' in saved))
+    assert.throws(() => normalizeProviderInput({ ...saved, baseUrl: 'https://relay.test/v1' }))
+    assert.throws(() => normalizeProviderInput({ ...saved, extraHeaders: { Authorization: 'Bearer other' } }))
+  }
+})
 
 it('does not follow redirects carrying bearer or custom credentials', async () => {
   let leaks = 0

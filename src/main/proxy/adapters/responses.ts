@@ -10,7 +10,7 @@ type Connection = Pick<AdapterContext, 'provider' | 'model'>
 
 // Bind opaque reasoning to the exact connection/model; never replay it after switching accounts.
 function signatureOwner({ provider, model }: Connection): string {
-  const hash = createHash('sha256').update(JSON.stringify([provider.baseUrl, provider.apiKey, provider.extraHeaders, model])).digest('hex').slice(0, 24)
+  const hash = createHash('sha256').update(JSON.stringify([provider.baseUrl, provider.credentialId || provider.apiKey, provider.extraHeaders, model])).digest('hex').slice(0, 24)
   return `${provider.id}-responses-${hash}`
 }
 
@@ -71,6 +71,16 @@ export function buildResponsesBody(req: AccioRequest, ctx: Connection): Item {
   }
   const format = responseFormat(req.responseFormat) as Item | undefined
   if (format) body.text = { format: format.type === 'json_schema' ? { type: 'json_schema', ...format.json_schema } : format }
+  if (ctx.provider.authMode === 'openai-oauth') {
+    delete body.max_output_tokens
+    delete body.temperature
+    delete body.top_p
+    if (body.tools) {
+      body.tools = [{ type: 'namespace', name: 'accio', description: 'Tools executed by the local Accio client.', tools: body.tools }]
+      if (body.tool_choice?.type === 'function') body.tool_choice.namespace = 'accio'
+    }
+    for (const item of input) if (item.type === 'function_call') item.namespace = 'accio'
+  }
   return body
 }
 
@@ -88,7 +98,10 @@ async function* stream(req: AccioRequest, ctx: AdapterContext): AsyncGenerator<A
     const j = tryJson(ev.data) as Item | undefined
     if (!j) continue
     const type = j.type ?? ev.event
-    if (type === 'error' || type === 'response.failed') throw new UpstreamError(`${ctx.provider.name}：${j.response?.error?.message ?? j.error?.message ?? j.message ?? tr("Responses 请求失败")}`, Number(j.status_code ?? j.response?.error?.status_code) || 502)
+    if (type === 'error' || type === 'response.failed') {
+      const error = j.response?.error ?? j.error ?? j
+      throw Object.assign(new UpstreamError(`${ctx.provider.name}：${error.message ?? tr("Responses 请求失败")}`, Number(j.status_code ?? error.status_code) || 502), { code: typeof error.code === 'string' ? error.code : undefined, requestId: res.headers.get('x-request-id') ?? undefined })
+    }
     if (/^response\.(output_text|refusal|reasoning_summary_text)\.delta$/.test(type) && typeof j.delta === 'string') {
       ctx.onProgress?.()
       const key = `${j.item_id ?? j.output_index}:${j.content_index ?? j.summary_index ?? 0}:${type.split('.')[1]}`
@@ -140,6 +153,7 @@ async function* stream(req: AccioRequest, ctx: AdapterContext): AsyncGenerator<A
   // Accio preserves signatures only on non-empty parts; reuse the existing invisible placeholder.
   if (signature) yield { type: 'thought', text: '\u200b', signature }
   for (const call of calls) {
+    if (ctx.provider.authMode === 'openai-oauth' && call.namespace !== 'accio') throw new UpstreamError('Unexpected tool namespace; no tool was executed')
     if (!call.call_id || !call.name || typeof call.arguments !== 'string' || (call.status && call.status !== 'completed')) throw new UpstreamError(tr("Responses 工具调用不完整，已停止本轮"))
     yield { type: 'tool_call', id: safeToolId(call.call_id), name: call.name, argsJson: call.arguments, signature }
   }

@@ -45,6 +45,11 @@ function addTo(b: UsageBucket, e: RequestLog): void {
   if (e.status === 'error') b.errors++
   if (e.status === 'aborted') b.aborted = (b.aborted ?? 0) + 1
   if (e.mode === 'byok') b.byokRequests = (b.byokRequests ?? 0) + 1
+  if (e.mode === 'byok') {
+    if (e.fundingSource === 'subscription') b.subscriptionRequests = (b.subscriptionRequests ?? 0) + 1
+    else if (e.fundingSource === 'local') b.localRequests = (b.localRequests ?? 0) + 1
+    else b.apiRequests = (b.apiRequests ?? 0) + 1
+  }
   if (e.costUsd !== undefined) b.estimatedRequests = (b.estimatedRequests ?? 0) + 1
   if (e.costComplete) b.fullyEstimatedRequests = (b.fullyEstimatedRequests ?? 0) + 1
   if (e.cacheReadReported) {
@@ -100,6 +105,7 @@ export class LogStore extends EventEmitter {
   }
 
   add(entry: Omit<RequestLog, 'id' | 'costUsd'>, pricing?: ProviderPricing, capture?: Omit<RequestCapture, 'id'>): RequestLog {
+    if (entry.fundingSource === 'subscription' || entry.fundingSource === 'local') pricing = undefined
     const log: RequestLog = {
       ...entry,
       id: `${entry.ts.toString(36)}-${(this.seq++).toString(36)}`,
