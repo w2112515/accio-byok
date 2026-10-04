@@ -1,6 +1,7 @@
 import { tr } from '../../../shared/i18n.ts'
 import type { ModelInfo, Provider } from '../../../shared/types.ts'
 import { autoEffort } from '../../../shared/model-info.ts'
+import { REASONING_EFFORTS } from '../../../shared/types.ts'
 import {
   UpstreamError,
   clampEffort,
@@ -319,10 +320,11 @@ async function describeModel(provider: Provider, fetch: FetchLike, signal?: Abor
     const modalities = row.input_modalities ?? row.architecture?.input_modalities
     if (Array.isArray(modalities)) info.vision = modalities.includes('image')
     const levels = row.effort?.supported_levels
-    if (Array.isArray(levels)) info.effortLevels = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].filter((v) => levels.includes(v))
+    if (Array.isArray(levels)) info.effortLevels = REASONING_EFFORTS.filter((v) => levels.includes(v))
     if (base.hostname === 'openrouter.ai' && row.reasoning && Object.hasOwn(row.reasoning, 'supported_efforts')) {
       const levels = row.reasoning.supported_efforts
-      if (levels === null || Array.isArray(levels)) info.effortLevels = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].filter((v) => levels === null || levels.includes(v))
+      if (levels === null) info.effortLevels = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+      else if (Array.isArray(levels)) info.effortLevels = REASONING_EFFORTS.filter((v) => levels.includes(v))
     }
   }
   return Object.keys(info).some((key) => !['model', 'windowKind', 'source', 'sourceUrl', 'checkedAt'].includes(key) && info[key as keyof ModelInfo] !== undefined) ? info : undefined

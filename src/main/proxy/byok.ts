@@ -18,7 +18,7 @@ import { geminiAdapter } from './adapters/gemini.ts'
 import { openaiAdapter } from './adapters/openai.ts'
 import { redactProviderError } from './request-policy.ts'
 import { responsesAdapter } from './adapters/responses.ts'
-import { autoParameters } from '../../shared/model-info.ts'
+import { autoEffort, autoParameters } from '../../shared/model-info.ts'
 
 export const ADAPTERS: Record<Provider['kind'], Adapter> = {
   openai: openaiAdapter,
@@ -97,6 +97,8 @@ export async function streamByok(opts: ByokOptions): Promise<ByokResult> {
     const normalized = normalizeProviderInput(opts.provider, true)
     opts = { ...opts, provider: { ...opts.provider, ...normalized, apiKey: opts.provider.apiKey } }
     opts.provider = autoParameters(opts.provider, opts.model) as Provider
+    // Validate even when unknown capabilities disable the adapter's effort field.
+    autoEffort(opts.provider, opts.model)
     if (!opts.model) throw Object.assign(new Error(tr("「{0}」还没有设置模型，请在 Accio BYOK 中填写", opts.provider.name)), { status: 400 })
     const adapter = opts.provider.kind === 'openai' && opts.provider.openaiApi === 'responses' ? responsesAdapter : ADAPTERS[opts.provider.kind]
     for await (const ev of adapter.stream(opts.req, {

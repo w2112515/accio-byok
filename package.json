@@ -1,7 +1,7 @@
 {
   "name": "accio-switch",
   "productName": "Accio BYOK",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "Bring your own model keys to Accio — hot-switch providers, back up sessions, track usage.",
   "author": "Accio BYOK",
   "license": "MIT",

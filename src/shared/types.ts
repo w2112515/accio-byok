@@ -6,6 +6,11 @@ export type ThinkingMode = 'off' | 'adaptive' | 'budget'
 export type AuthMode = 'api-key' | 'subscription-key' | 'openai-oauth' | 'openrouter-oauth' | 'none'
 export type FundingSource = 'api' | 'subscription' | 'local'
 
+/** Wire values; availability is determined by the selected endpoint and model. */
+export const REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const
+export type ReasoningEffort = typeof REASONING_EFFORTS[number]
+export type ReasoningPreference = 'auto' | 'fast' | 'deep' | ReasoningEffort
+
 export interface AuthorizationView {
   id: string
   service: 'openai' | 'openrouter'
@@ -77,7 +82,8 @@ export interface Provider {
   modelOverrides: Record<string, string>
   /** Missing on existing configurations: keep all manually chosen parameters. */
   parameterMode?: 'auto' | 'custom'
-  reasoningPreference?: 'auto' | 'fast' | 'deep'
+  /** Automatic mode: exact effort or service default. fast/deep preserve legacy preferences. */
+  reasoningPreference?: ReasoningPreference
   /** Fixed max output tokens; overrides what Accio asks for when set. */
   maxOutputTokens?: number
   /** Forward Accio's reasoning effort (OpenAI `reasoning_effort`, Anthropic `output_config.effort`). */

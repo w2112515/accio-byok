@@ -28,7 +28,7 @@ http
       if (req.url?.endsWith('/models')) {
         metadataRequests++
         res.writeHead(200, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ data: [{ id: 'mock-fast', context_window: 64_000, max_output_tokens: 4096, effort: { supported_levels: ['low', 'high'] } }, { id: 'mock-pro', context_window: 128_000, max_output_tokens: 8192 }, { id: 'mock-reasoner' }] }))
+        res.end(JSON.stringify({ data: [{ id: 'mock-fast', context_window: 64_000, max_output_tokens: 4096, effort: { supported_levels: ['low', 'high'] } }, { id: 'mock-pro', context_window: 128_000, max_output_tokens: 8192 }, { id: 'mock-reasoner', effort: { supported_levels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] } }] }))
         return
       }
       if (req.url?.endsWith('/chat/completions') || req.url?.endsWith('/responses')) {

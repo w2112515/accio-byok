@@ -1,4 +1,5 @@
 import type { ModelInfo, Provider, ProviderKind } from './types.ts'
+import { tx } from './i18n.ts'
 
 /** Exact official model IDs only. Compatible endpoints can have different limits and prices. */
 function claudeModelInfo(kind: ProviderKind, baseUrl: string, model: string): ModelInfo | undefined {
@@ -114,8 +115,24 @@ export function autoParameters<T extends Pick<Provider, 'kind' | 'baseUrl' | 'mo
   return { ...provider, maxOutputTokens: undefined, sendSampling: false, sendReasoningEffort: !!info?.effortLevels?.length, sendReasoningContent: info?.reasoningContent === true, thinking: info?.thinking ?? 'off', thinkingBudget: 8000, promptCaching: nativeClaude, ...(info?.recommendedApi && provider.authMode !== 'subscription-key' ? { openaiApi: info.recommendedApi } : {}) }
 }
 
-export function autoEffort(provider: Provider, model: string): string | undefined {
+type ReasoningProvider = ModelProvider & Pick<Provider, 'parameterMode' | 'reasoningPreference'>
+
+/** Exact choices must remain valid for the actual target; never silently clamp or omit them. */
+export function reasoningEffortIssue(provider: ReasoningProvider, model = provider.model): string | undefined {
+  const effort = provider.reasoningPreference
+  if (provider.parameterMode !== 'auto' || !effort || ['auto', 'fast', 'deep'].includes(effort)) return undefined
+  const levels = usableModelInfo(provider, model)?.effortLevels
+  if (levels?.includes(effort)) return undefined
+  return levels?.length
+    ? tx(`Model ${model} does not support effort ${effort} on this connection. Supported: ${levels.join(', ')}. Choose a supported level or Model default.`, `当前连接的模型 ${model} 不支持推理档位 ${effort}；可选：${levels.join('、')}。请选择支持的档位或“模型默认”。`)
+    : tx(`Effort ${effort} has not been confirmed for model ${model} on this connection. Read its model information or choose Model default.`, `当前连接的模型 ${model} 尚未确认支持推理档位 ${effort}。请读取模型信息，或选择“模型默认”。`)
+}
+
+export function autoEffort(provider: ReasoningProvider, model: string): string | undefined {
   if (provider.parameterMode !== 'auto' || !provider.reasoningPreference || provider.reasoningPreference === 'auto') return undefined
+  const issue = reasoningEffortIssue(provider, model)
+  if (issue) throw new Error(issue)
+  if (!['fast', 'deep'].includes(provider.reasoningPreference)) return provider.reasoningPreference
   const levels = usableModelInfo(provider, model)?.effortLevels?.filter((v) => v !== 'none')
   if (!levels?.length) return undefined
   return provider.reasoningPreference === 'fast' ? levels[0] : levels[levels.length - 1]

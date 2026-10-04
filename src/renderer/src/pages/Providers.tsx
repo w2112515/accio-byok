@@ -22,9 +22,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { CATEGORY_LABELS, PRESETS, findPreset, type PresetCategory, type ProviderPreset } from '../../../shared/presets.ts'
 import { inferProviderKind, normalizeBaseUrl } from '../../../shared/provider-input.ts'
-import { autoParameters, knownModelInfo, usableModelInfo } from '../../../shared/model-info.ts'
+import { autoParameters, knownModelInfo, reasoningEffortIssue, usableModelInfo } from '../../../shared/model-info.ts'
 import {
   OFFICIAL_PROVIDER_ID,
+  REASONING_EFFORTS,
   type AccioModelInfo,
   type ProviderInput,
   type ProviderKind,
@@ -36,6 +37,7 @@ import {
   type ThinkingMode,
   type AuthMode,
   type UsageStats,
+  type ReasoningPreference,
 } from '../../../shared/types.ts'
 import { effectState, PageHeader, StartAccioButton, useSwitchProvider } from '../App.tsx'
 import { KIND_LABEL, KindBadge, OfficialAvatar, ProviderAvatar } from '../components/brand.tsx'
@@ -82,7 +84,7 @@ interface Draft {
   keyMasked: string
   model: string
   parameterMode: 'auto' | 'custom'
-  reasoningPreference: 'auto' | 'fast' | 'deep'
+  reasoningPreference: ReasoningPreference
   overrides: { from: string; to: string }[]
   maxOutputTokens: string
   sendReasoningEffort: boolean
@@ -409,6 +411,34 @@ function ToggleRow({ label, hint, checked, onChange }: { label: string; hint?: s
   )
 }
 
+function ReasoningSettings({ value, info, issue, onChange }: { value: ReasoningPreference; info?: ModelInfo; issue?: string; onChange: (v: ReasoningPreference) => void }) {
+  const levels = REASONING_EFFORTS.filter((v) => info?.effortLevels?.includes(v))
+  const legacy = value === 'fast' || value === 'deep'
+  const legacyLevels = levels.filter((v) => v !== 'none')
+  const legacyValue = value === 'fast' ? legacyLevels[0] : legacyLevels.at(-1)
+  const labels = {
+    none: tx('Off', '关闭'), minimal: tx('Minimal', '最少'), low: tx('Low', '低'), medium: tx('Medium', '中'),
+    high: tx('High', '高'), xhigh: tx('Extra high', '很高'), max: tx('Maximum', '最大'), ultra: 'Ultra',
+  }
+  const options: { value: ReasoningPreference; label: string }[] = [
+    { value: 'auto', label: tx('Model default', '模型默认') },
+    ...levels.map((level) => ({ value: level, label: `${labels[level]} · ${level}` })),
+  ]
+  if (legacy) options.push({ value, label: `${value === 'fast' ? tx('Faster (legacy)', '更快（旧设置）') : tx('Deeper (legacy)', '更深入（旧设置）')} · ${legacyValue ?? tx('Model default', '模型默认')}` })
+  else if (value !== 'auto' && !levels.includes(value)) options.push({ value, label: `${value} · ${tx('Unavailable for this model', '当前模型不可用')}` })
+  return <Field label={tx('Reasoning effort', '思考程度')} htmlFor="pv-effort">
+    <SelectBox id="pv-effort" label={tx('Reasoning effort', '思考程度')} value={value} onChange={onChange} options={options} />
+    {issue ? <p role="alert" className="mt-2 text-[12px] leading-relaxed text-danger">{issue}</p> : null}
+    {!issue ? <p className="mt-2 text-[12px] leading-relaxed text-muted">{legacy
+      ? tx('Your previous preference is preserved: it follows the target model’s lowest/highest supported level. Choose a specific level to send that exact value.', '保留原有偏好：随目标模型使用其最低／最高档位。选择具体档位后，将按该值发送。')
+      : value === 'auto'
+        ? tx('No effort value is sent; the service chooses its default.', '不指定 effort，由服务端采用默认值。')
+        : tx(`Requests use effort ${value}. Mapped models must support the same value.`, `请求使用 effort=${value}；单独映射的模型也需要支持该档位。`)}</p> : null}
+    {!levels.length ? <p className="mt-1 text-[12px] text-subtle">{tx('This connection has not provided confirmed adjustable levels for this model.', '当前连接尚未提供该模型已确认的可调档位。')}</p> : null}
+    <p className="mt-1 text-[11px] text-subtle">{tx('Deeper reasoning can increase tokens and latency. Changing effort may affect prompt caching.', '更深入可能增加 Token 消耗和等待时间；切换档位可能影响缓存命中。')}</p>
+  </Field>
+}
+
 function ProviderEditor({ open, onOpenChange, initial, focusChecks = false }: { open: boolean; onOpenChange: (v: boolean) => void; initial: ProviderView | 'new' | null; focusChecks?: boolean }) {
   const { state, logs } = useStore()
   const [step, setStep] = useState<'preset' | 'form' | 'ready'>('preset')
@@ -497,6 +527,8 @@ function ProviderEditor({ open, onOpenChange, initial, focusChecks = false }: { 
     finally { setSigningIn(false) }
   }
   const modelInfo = draft ? usableModelInfo(draft, draft.model.trim()) : undefined
+  const effortIssue = draft ? [...new Set([draft.model.trim(), ...draft.overrides.filter((o) => o.from.trim() && o.to.trim()).map((o) => o.to.trim())])]
+    .map((model) => reasoningEffortIssue(draft, model)).find(Boolean) : undefined
   const recommended = draft && !urlErrorFor(draft) ? autoParameters({ kind: draft.kind, baseUrl: draft.baseUrl, model: draft.model.trim(), modelInfo: draft.modelInfo, authMode: draft.authMode, parameterMode: 'auto' }) : undefined
   const useParameterMode = (mode: 'auto' | 'custom') => {
     if (!draft) return
@@ -555,7 +587,7 @@ function ProviderEditor({ open, onOpenChange, initial, focusChecks = false }: { 
   }
 
   const save = async () => {
-    if (!draft || readingInfo || urlError || !draft.model.trim()) return
+    if (!draft || readingInfo || urlError || effortIssue || !draft.model.trim()) return
     metadataAttempt.current = metadataIdentity
     setSaving(true)
     try {
@@ -573,7 +605,7 @@ function ProviderEditor({ open, onOpenChange, initial, focusChecks = false }: { 
   }
 
   const runTest = async (activate = false, scope: TestScope = 'text') => {
-    if (!draft || readingInfo) return
+    if (!draft || readingInfo || effortIssue) return
     metadataAttempt.current = metadataIdentity
     const version = ++operation.current
     const current = () => operation.current === version && latestDraft.current === draft
@@ -631,12 +663,12 @@ function ProviderEditor({ open, onOpenChange, initial, focusChecks = false }: { 
               {testing ? tr("正在测试提交时的配置…修改配置后，本次结果不再适用。") : <>{test?.scope ? `${{ text: tr("短文本"), tools: tr("工具调用"), image: tr("图片识别"), multiturn: tx('Tool round trip', '工具多轮续接') }[test.scope]} · ` : ''}{test?.checkedAt ? `${fmtDateTime(test.checkedAt)} · ` : ''}{test?.ok ? tr("通过 · {0} · {1}", fmtMs(test.latencyMs), test.message) : test?.message}</>}
             </div> : null}
             <div className="flex justify-end gap-2">
-            <Button onClick={() => void runTest()} disabled={readingInfo || signingIn || saving || testing || !!urlError || !draft.model.trim()}>
+            <Button onClick={() => void runTest()} disabled={readingInfo || signingIn || saving || testing || !!urlError || !!effortIssue || !draft.model.trim()}>
               <Wifi />
               {tr("测试")}</Button>
-            <Button onClick={save} disabled={readingInfo || signingIn || saving || testing || !!urlError || !draft.model.trim()}>
+            <Button onClick={save} disabled={readingInfo || signingIn || saving || testing || !!urlError || !!effortIssue || !draft.model.trim()}>
               {tr("仅保存")}</Button>
-            <Button variant="primary" onClick={() => void runTest(true)} loading={saving || testing} disabled={readingInfo || signingIn || !!urlError || !draft.model.trim()}>
+            <Button variant="primary" onClick={() => void runTest(true)} loading={saving || testing} disabled={readingInfo || signingIn || !!urlError || !!effortIssue || !draft.model.trim()}>
               {tr("测试并启用")}</Button>
             </div>
           </div>
@@ -749,9 +781,9 @@ function ProviderEditor({ open, onOpenChange, initial, focusChecks = false }: { 
             <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-[13px] font-medium">{tx('Model settings', '模型设置')}</p><Segmented label={tx('Parameter mode', '参数模式')} value={draft.parameterMode} onChange={useParameterMode} options={[{ value: 'auto', label: tx('Automatic · recommended', '自动 · 推荐') }, { value: 'custom', label: tx('Custom', '自定义') }]} /></div>
             {draft.parameterMode === 'auto' ? <>
               <p className="text-[12px] leading-relaxed text-muted">{tx('Output follows Accio and is capped at the known model limit. Optional parameters follow the selected model. API metadata is read automatically after selection; no generation request is sent.', '输出沿用 Accio，并限制在已知模型上限内；可选参数随实际模型调整。选定模型后自动读取接口资料，不发送生成请求。')}</p>
-              {modelInfo?.effortLevels?.length ? <Field label={tx('Reasoning preference', '推理偏好')}><Segmented label={tx('Reasoning preference', '推理偏好')} value={draft.reasoningPreference} onChange={(v) => set('reasoningPreference', v)} options={[{ value: 'auto', label: tx('Model default', '模型默认') }, { value: 'fast', label: tx('Faster', '更快') }, { value: 'deep', label: tx('Deeper', '更深入') }]} /><p className="mt-1 text-[11px] text-subtle">{tx('Deeper reasoning can increase tokens and latency. Changing effort may invalidate cached prefixes.', '更深入可能增加 Token 消耗和等待时间；切换推理档位可能影响缓存命中。')}</p></Field> : <p className="text-[12px] text-subtle">{tx('Reasoning uses the service default; adjustable levels have not been confirmed for this model.', '推理沿用服务默认值；当前模型尚未确认支持可调档位。')}</p>}
+              <ReasoningSettings value={draft.reasoningPreference} info={modelInfo} issue={effortIssue} onChange={(v) => set('reasoningPreference', v)} />
               {!modelInfo?.contextWindow ? <p className="text-[12px] text-warning">{tx('Window unknown. This endpoint has not supplied a verified limit; set it from provider documentation if needed.', '窗口未知：当前端点尚未提供可核实上限，可依据供应商文档补填。')}</p> : null}
-            </> : <p className="text-[12px] leading-relaxed text-muted">{tx('Your existing settings are preserved. Edit advanced parameters below or choose Automatic to apply model recommendations.', '保留现有设置；可在下方修改高级参数，或切换到“自动”应用模型推荐配置。')}</p>}
+            </> : <p className="text-[12px] leading-relaxed text-muted">{tx('Your existing settings are preserved. Reasoning follows the forwarding option in Advanced; the Automatic effort selection is inactive. Choose Automatic to select a model-specific effort.', '保留现有设置；推理由高级设置的转发开关控制，自动模式的档位选择在此不生效。切换到“自动”可选择当前模型的具体档位。')}</p>}
             {readingInfo ? <p role="status" className="flex items-center gap-1 text-[12px] text-muted"><Loader2 className="size-3 animate-spin" />{tx('Reading model information…', '正在读取模型信息…')}</p> : infoMessage ? <p role="status" className="text-[12px] text-muted">{infoMessage}</p> : null}
           </div>
           <div className="rounded-lg border border-border bg-fg/[0.025] px-3 py-2.5 text-[12px] leading-relaxed text-muted">
@@ -764,7 +796,7 @@ function ProviderEditor({ open, onOpenChange, initial, focusChecks = false }: { 
           {initial && initial !== 'new' && initial.keyError && !draft.keyTouched ? <p role="alert" className="text-[12.5px] text-danger">{initial.keyError}</p> : null}
           <div ref={checksSection}><Section title={tr("可选能力检测")} description={tr("需要工具或图片功能时分别检查；不会自动调用")} defaultOpen={focusChecks}>
             <p className="text-[12px] leading-relaxed text-subtle">{tx('Tool checks return fixed arguments without executing real tools. Image checks use a built-in red square. Results apply to the tested configuration.', '工具检测仅返回固定参数，不执行真实工具；图片检测使用内置红色方块，结果只适用于被检测的配置。')}</p>
-            <div className="flex flex-wrap gap-2"><Button size="sm" disabled={readingInfo || signingIn || saving || testing || !!urlError || !draft.model.trim()} onClick={() => void runTest(false, 'tools')}>{tr("检测工具调用")}</Button><Button size="sm" disabled={readingInfo || signingIn || saving || testing || !!urlError || !draft.model.trim()} onClick={() => void runTest(false, 'image')}>{tr("检测图片识别")}</Button><Button size="sm" disabled={readingInfo || signingIn || saving || testing || !!urlError || !draft.model.trim()} onClick={() => void runTest(false, 'multiturn')}>{tx('Check tool round trip', '检测工具多轮续接')}</Button></div>
+            <div className="flex flex-wrap gap-2"><Button size="sm" disabled={readingInfo || signingIn || saving || testing || !!urlError || !!effortIssue || !draft.model.trim()} onClick={() => void runTest(false, 'tools')}>{tr("检测工具调用")}</Button><Button size="sm" disabled={readingInfo || signingIn || saving || testing || !!urlError || !!effortIssue || !draft.model.trim()} onClick={() => void runTest(false, 'image')}>{tr("检测图片识别")}</Button><Button size="sm" disabled={readingInfo || signingIn || saving || testing || !!urlError || !!effortIssue || !draft.model.trim()} onClick={() => void runTest(false, 'multiturn')}>{tx('Check tool round trip', '检测工具多轮续接')}</Button></div>
             {savedChecks?.length ? <div className="space-y-1 text-[12px] text-muted"><p>{tx('Saved connection evidence; edits require new checks. Checks older than 30 days are flagged for review, without automatic requests.', '已保存连接的验证记录；更改配置后需要重新检测。超过 30 天会提示复核，不自动发送请求。')}</p>{savedChecks.map((c) => <p key={c.scope} className={c.ok && checkNeedsReview(c) ? 'text-warning' : undefined}>{checkScopeLabel(c.scope)} · {c.ok ? checkNeedsReview(c) ? tx('Previously passed · review recommended', '曾通过 · 建议复核') : tx('Passed', '通过') : tx('Failed', '失败')} · {fmtDateTime(c.checkedAt)}</p>)}</div> : null}
           </Section></div>
 

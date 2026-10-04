@@ -1,6 +1,8 @@
 import { tr, tx } from './i18n.ts'
 import type { ProviderInput, ProviderKind } from './types.ts'
 import { subscriptionRoute } from './provider-access.ts'
+import { REASONING_EFFORTS } from './types.ts'
+import { reasoningEffortIssue } from './model-info.ts'
 
 export function validateUpstreamGateway(value: string, allowLegacyHttp = false): URL {
   let url: URL
@@ -49,7 +51,7 @@ export function normalizeProviderInput(input: ProviderInput, requireModel = fals
   const openaiApi = input.kind === 'openai' && /\/responses\/?$/.test(endpoint) ? 'responses' : input.kind === 'openai' && /\/chat\/completions\/?$/.test(endpoint) ? 'chat' : input.openaiApi
   const model = input.model.trim()
   if (input.parameterMode !== undefined && !['auto', 'custom'].includes(input.parameterMode)) throw new Error(tx('Invalid parameter mode', '参数模式无效'))
-  if (input.reasoningPreference !== undefined && !['auto', 'fast', 'deep'].includes(input.reasoningPreference)) throw new Error(tx('Invalid reasoning preference', '推理偏好无效'))
+  if (input.reasoningPreference !== undefined && !['auto', 'fast', 'deep', ...REASONING_EFFORTS].includes(input.reasoningPreference)) throw new Error(tx('Invalid reasoning preference', '推理偏好无效'))
   const authMode = input.authMode ?? 'api-key'
   if (!['api-key', 'subscription-key', 'openai-oauth', 'openrouter-oauth', 'none'].includes(authMode)) throw new Error(tx("Invalid authentication method", "认证方式无效"))
   if (input.fundingSource && !['api', 'subscription', 'local'].includes(input.fundingSource)) throw new Error(tx("Invalid billing source", "计费来源无效"))
@@ -77,7 +79,7 @@ export function normalizeProviderInput(input: ProviderInput, requireModel = fals
     for (const value of [info.contextWindow, info.maxOutputTokens]) {
       if (value !== undefined && (!Number.isSafeInteger(value) || value < 1)) throw new Error(tr("模型窗口和输出上限必须是正整数"))
     }
-    if (info.effortLevels !== undefined && (!Array.isArray(info.effortLevels) || info.effortLevels.length > 10 || info.effortLevels.some((v) => !['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].includes(v)))) throw new Error(tx('Invalid model reasoning levels', '模型推理档位无效'))
+    if (info.effortLevels !== undefined && (!Array.isArray(info.effortLevels) || info.effortLevels.length > REASONING_EFFORTS.length || info.effortLevels.some((v) => !(REASONING_EFFORTS as readonly string[]).includes(v)))) throw new Error(tx('Invalid model reasoning levels', '模型推理档位无效'))
     if (info.thinking !== undefined && !['off', 'adaptive', 'budget'].includes(info.thinking)) throw new Error(tx('Invalid model thinking mode', '模型思考模式无效'))
     if (info.recommendedApi !== undefined && !['chat', 'responses'].includes(info.recommendedApi)) throw new Error(tx('Invalid model protocol', '模型协议无效'))
     for (const value of [info.sampling, info.reasoningContent, info.tools, info.vision]) {
@@ -89,10 +91,17 @@ export function normalizeProviderInput(input: ProviderInput, requireModel = fals
     if (!/^[!#$%&'*+.^_`|~\w-]+$/.test(name) || typeof value !== 'string' || /[\r\n]/.test(value)) throw new Error(tr("自定义请求头格式无效"))
     if (/^(host|content-length|transfer-encoding|connection|upgrade|proxy-.*|sec-.*|cookie|set-cookie)$/i.test(name)) throw new Error(tr("不能覆盖请求头 {0}；此处仅填写网关 API 请求头，不接受网站登录 Cookie", name))
   }
-  return {
+  const normalized = {
     ...input, baseUrl, openaiApi, model, name: input.name.trim(), apiKey: input.apiKey?.trim(),
     authMode,
     fundingSource: authMode === 'openai-oauth' || authMode === 'subscription-key' ? 'subscription' : authMode === 'none' ? 'local' : 'api',
     modelOverrides: Object.fromEntries(Object.entries(input.modelOverrides ?? {}).filter(([k, v]) => k.trim() && v.trim()).map(([k, v]) => [k.trim(), v.trim()])),
+  } satisfies ProviderInput
+  if (requireModel) {
+    for (const target of new Set([model, ...Object.values(normalized.modelOverrides)])) {
+      const issue = reasoningEffortIssue(normalized, target)
+      if (issue) throw new Error(issue)
+    }
   }
+  return normalized
 }

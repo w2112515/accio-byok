@@ -1,5 +1,19 @@
 # Accio BYOK：实施结果与验收
 
+## 1.5.1: Exact reasoning effort / 精确选择思考程度
+
+2026-10-05. Version 1.5.1 is distributed as a [public preview](https://github.com/w2112515/accio-byok/releases/tag/v1.5.1). Automatic model settings now offer **Model default + every confirmed effort level for the selected endpoint and model**, with the actual wire value shown next to each label. This replaces the three-choice UI for new selections.
+
+- 自动模式下可精确选择中间档位；保存后按所选值发送，不把中间档位换成最高档。“模型默认”不发送 effort 参数，由服务决定。
+- 档位依据当前接入渠道与模型的元数据 / 官方资料。Astra 官方 API 提供 `low / medium / high / xhigh / max`，K3 提供 `low / high / max`；不把 Codex 的 Ultra 并行工作模式当成官方 API 的第六档。其他渠道只有明确返回支持的参数值才展示。
+- 换模型或渠道后，保留不兼容的原选择并显示原因；保存和测试暂不可用，用户可选择兼容档位或模型默认。主进程在保存、启用和发送前也校验，不能通过绕过界面发送未确认的档位。
+- 精确档位用于该连接的所有实际目标模型，包括单独映射。映射模型必须也确认支持同一值；当前元数据缓存只绑定默认模型，其他目标沿用各自已知资料。缺少映射模型资料时可选择模型默认，或将其拆成独立连接。
+- 旧 `fast / deep` 偏好保留最低 / 最高档位的原行为，编辑器明确标为旧设置并显示当前解析值；不会在升级或打开编辑器时静默迁移。自定义参数模式继续由高级设置的转发开关控制，界面说明自动档位在此不生效。
+
+Sources: [Astra API effort levels](https://developers.openai.com/api/docs/models/gpt-6-astra), [Codex reasoning and Ultra](https://learn.chatgpt.com/docs/models?surface=app), [Kimi Code models](https://www.kimi.com/code/docs/kimi-code/models.html).
+
+验证：48 项现有测试通过；局部冒烟检查 OpenAI Chat / Responses、Anthropic、Gemini 的具体参数值、模型默认、旧偏好、元数据、配置重读、检测记录失效，以及不兼容目标在联网前被拦截。Electron 隔离配置走查包含完整档位、保存重开、切模型提示、恢复默认和本地模拟供应商的实际代理请求。最终 1.5.1 便携版重开加密配置并完成代理请求，模拟服务收到 `reasoning_effort: medium`；打包应用文件与最终构建逐一匹配。经用户授权，1.5.0 安装版已覆盖升级至 1.5.1；升级前备份加密配置，安装及启动后配置文件哈希保持一致，原连接和 Key 可读取，代理正常启动。安装包、便携包和 SHA-256 校验值位于 `release/1.5.1`。未调用真实付费模型；本地模拟不代表真实供应商效果验收。
+
 ## 1.5.0: Automatic model settings / 自动模型配置
 
 2026-10-02. Version 1.5.0 is distributed as a [public preview](https://github.com/w2112515/accio-byok/releases/tag/v1.5.0), covering every existing connection preset: 18 visible provider/gateway presets now present 26 distinct API, subscription and OAuth entries; the three legacy custom presets remain compatible. New connections use Automatic settings. Existing configurations keep their manual behavior until the user explicitly chooses Automatic.
